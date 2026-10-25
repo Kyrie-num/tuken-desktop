@@ -14,8 +14,7 @@ use crate::api::{self, number, str_field};
 use crate::vault::{Account, Order};
 use crate::State;
 
-/// The 云猫 shop that sells 兔啃 credit. Unused codes of the old TokenLab site
-/// also redeem on 兔啃.
+/// The 云猫 shop that sells 兔啃 credit.
 const SHOP_ID: &str = "HD69FQCE";
 /// Unpaid orders are given up after this long, so they stop being polled.
 const ORDER_TTL: i64 = 30 * 60;

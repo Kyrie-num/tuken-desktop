@@ -428,7 +428,7 @@ mod tests {
     fn recognizes_only_the_tuken_gateway() {
         assert!(is_tuken_url("https://www.tuken.site"));
         assert!(is_tuken_url("https://www.tuken.site/"));
-        assert!(!is_tuken_url("https://tokenlabapi.site/"));
+        assert!(!is_tuken_url("https://api.example.com/"));
         assert!(!is_tuken_url("https://user@www.tuken.site/"));
         assert!(!is_tuken_url("https://www.tuken.site:8443/"));
         assert!(!is_tuken_url("http://www.tuken.site"));
