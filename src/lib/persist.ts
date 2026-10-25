@@ -31,7 +31,10 @@ export function persistCache(client: QueryClient) {
   const write = () => {
     const state = dehydrate(client, {
       shouldDehydrateQuery: (q) =>
-        q.state.status === "success" && !SKIP.has(String(q.queryKey[0])),
+        q.state.status === "success" &&
+        !SKIP.has(String(q.queryKey[0])) &&
+        // A shut vault is this run's news, not the next one's.
+        !(q.state.data as { locked?: string } | undefined)?.locked,
     });
     try {
       localStorage.setItem(KEY, JSON.stringify({ at: Date.now(), state }));

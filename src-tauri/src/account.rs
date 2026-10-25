@@ -673,6 +673,23 @@ async fn auth_action(
     }
 }
 
+/// The accounts as the UI shows them. On macOS, while the keychain keeps the
+/// vault shut, `locked` says why (the page offers 重试); `notice` tells once
+/// that a vault had to be set aside.
+async fn app_state(state: &State) -> Result<Value, String> {
+    let mut view = match state.vault().await {
+        Ok(v) => v.view(),
+        Err(why) if state.locked().is_some() => {
+            return Ok(json!({ "active": null, "accounts": [], "orders": [], "locked": why }))
+        }
+        Err(why) => return Err(why),
+    };
+    if let Some(notice) = state.take_notice() {
+        view["notice"] = json!(notice);
+    }
+    Ok(view)
+}
+
 #[tauri::command]
 pub async fn tuken(
     app: AppHandle,
@@ -683,7 +700,12 @@ pub async fn tuken(
     let state = state.inner();
     let input = input.unwrap_or_else(|| json!({}));
     match action.as_str() {
-        "state" => Ok(state.vault().await?.view()),
+        "state" => app_state(state).await,
+        // The keychain said no earlier: ask it again, on the user's word.
+        "vault_retry" => {
+            state.unlock();
+            app_state(state).await
+        }
         "login_start" => login_start(&app, state, &input).await,
         "login_poll" => login_poll(&app, state).await,
         "login_cancel" => {

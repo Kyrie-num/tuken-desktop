@@ -7,6 +7,7 @@ import { App } from "@/app/App";
 import { LoginProvider, UiProvider } from "@/app/context";
 import { windowMaterial } from "@/lib/api";
 import { persistCache, restoreCache } from "@/lib/persist";
+import { loadPlatform } from "@/lib/platform";
 import { queryClient } from "@/lib/queries";
 import { applyTheme, storedTheme } from "@/lib/theme";
 import "@/styles/index.css";
@@ -44,9 +45,12 @@ export function Root() {
 
 /** Paints the cached pages first, then shows the window: no blank flash. */
 export async function boot() {
-  document.documentElement.dataset.backdrop = await windowMaterial
-    .get()
-    .catch(() => "none" as const);
+  const [material, platform] = await Promise.all([
+    windowMaterial.get().catch(() => "none" as const),
+    loadPlatform(),
+  ]);
+  document.documentElement.dataset.backdrop = material;
+  document.documentElement.dataset.platform = platform;
   applyTheme(storedTheme());
   restoreCache(queryClient);
   persistCache(queryClient);

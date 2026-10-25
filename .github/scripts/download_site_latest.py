@@ -27,6 +27,15 @@ def main(folder: str, tag: str) -> None:
     if latest["version"] != tag[1:]:
         sys.exit(f"latest.json is for {latest['version']}, the tag is {tag}")
 
+    # The updates the release must carry: Windows always; both Macs whenever
+    # there is a macOS disk image, so no Mac is left without its update.
+    needed = ["windows-x86_64"]
+    if list(root.glob(DOWNLOADS["macos"])):
+        needed += ["darwin-aarch64", "darwin-x86_64"]
+    missing = [key for key in needed if key not in latest["platforms"]]
+    if missing:
+        sys.exit(f"latest.json has no update for {', '.join(missing)}")
+
     def entry(name: str) -> dict:
         data = (root / name).read_bytes()
         return {

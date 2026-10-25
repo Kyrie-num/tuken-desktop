@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { toast, Toaster } from "sonner";
@@ -13,8 +13,11 @@ import {
   type Scenario,
 } from "@/dev/mock";
 import { rewardsSeen } from "@/features/rewards/RewardNotice";
+import { installText } from "@/lib/install";
 import { persistCache, restoreCache } from "@/lib/persist";
+import { loadPlatform } from "@/lib/platform";
 import { qk, queryClient } from "@/lib/queries";
+import { applyTheme } from "@/lib/theme";
 
 function show(scenario: Scenario, opts: Parameters<typeof createMock>[1] = {}) {
   const invoke = vi.fn(createMock(scenario, { delay: 0, ...opts }));
@@ -846,6 +849,167 @@ describe("兔啃", () => {
     restoreCache(queryClient);
     expect(queryClient.getQueryData(qk.profile(1))).toMatchObject({
       balance: 9.5,
+    });
+  });
+
+  it("draws its own window buttons on Windows", async () => {
+    show("in", { noDesktop: true });
+    expect(await screen.findByText("$28.50")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "最小化" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeInTheDocument();
+    expect(screen.queryByTestId("traffic-lights")).toBeNull();
+    expect(
+      screen.getByText("从 Anthropic 官方下载，安装包由 winget 校验"),
+    ).toBeInTheDocument();
+  });
+
+  it("says once that saved sign-ins couldn't be read and were set aside", async () => {
+    const notice = "这台电脑上保存的登录信息读不出来了，请重新登录";
+    show("out", { vaultNotice: notice });
+    expect(await screen.findByText(notice)).toBeInTheDocument();
+    expect(await screen.findByLabelText("密码")).toBeInTheDocument();
+    // Gone from the page's state, so it isn't said again.
+    await waitFor(() =>
+      expect(
+        (queryClient.getQueryData(qk.state) as { notice?: string }).notice,
+      ).toBeUndefined(),
+    );
+  });
+
+  it("asks the native side which system it runs on", async () => {
+    installMock(createMock("out", { platform: "macos" }));
+    expect(await loadPlatform()).toBe("macos");
+    installMock(async () => "plan9");
+    expect(await loadPlatform()).toBe("windows");
+    installMock(async () => {
+      throw "no native side";
+    });
+    expect(await loadPlatform()).toBe("windows");
+  });
+
+  it("says in a few words where an install of Claude Desktop is", () => {
+    expect(installText(null)).toBeNull();
+    expect(installText({ step: "download", percent: 0 })).toBe("正在下载");
+    expect(installText({ step: "download", percent: 42 })).toBe("正在下载 42%");
+    expect(installText({ step: "verify" })).toBe("正在检查安装包的签名");
+    expect(installText({ step: "copy" })).toBe("正在装进「应用程序」");
+  });
+
+  describe("on macOS", () => {
+    beforeEach(() => {
+      document.documentElement.dataset.platform = "macos";
+    });
+    afterEach(() => {
+      delete document.documentElement.dataset.platform;
+      document.documentElement.classList.remove("dark");
+    });
+
+    it("leaves the window buttons to macOS and makes room for them", async () => {
+      show("in", { platform: "macos" });
+      expect(await screen.findByText("$28.50")).toBeInTheDocument();
+      expect(screen.getByTestId("traffic-lights")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "最小化" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "关闭" })).toBeNull();
+    });
+
+    it("installs Claude Desktop step by step as the native side reports", async () => {
+      const user = userEvent.setup();
+      const invoke = show("in", {
+        platform: "macos",
+        noDesktop: true,
+        holdInstall: true,
+      });
+      expect(
+        await screen.findByText("从 Anthropic 官方下载，安装前检查签名"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/winget/)).toBeNull();
+      await user.click(screen.getByRole("button", { name: "一键安装" }));
+      const report = (payload: object) =>
+        act(() =>
+          invoke("mock:emit", { event: "tuken://desktop-install", payload }),
+        );
+      await report({ step: "download", percent: 42 });
+      expect(await screen.findByText("正在下载 42%")).toBeInTheDocument();
+      await report({ step: "verify" });
+      expect(
+        await screen.findByText("正在检查安装包的签名"),
+      ).toBeInTheDocument();
+      await report({ step: "copy" });
+      expect(
+        await screen.findByText("正在装进「应用程序」"),
+      ).toBeInTheDocument();
+      // No install is reported done before the native side says so.
+      expect(screen.queryByText("Claude Desktop 安装好了")).toBeNull();
+      await act(() => invoke("mock:release_install"));
+      expect(
+        await screen.findByText("Claude Desktop 安装好了"),
+      ).toBeInTheDocument();
+      expect(
+        await screen.findByText("已安装，版本 1.3.12"),
+      ).toBeInTheDocument();
+    });
+
+    it("sends the user to the download page when the install can't finish", async () => {
+      const user = userEvent.setup();
+      show("in", {
+        platform: "macos",
+        noDesktop: true,
+        installEnds: "browser",
+      });
+      await user.click(await screen.findByRole("button", { name: "一键安装" }));
+      expect(
+        await screen.findByText("没能自动安装，已打开官网下载页"),
+      ).toBeInTheDocument();
+      // Still to install.
+      expect(
+        screen.getByRole("button", { name: "一键安装" }),
+      ).toBeInTheDocument();
+    });
+
+    it("says plainly what on this Mac stopped the install", async () => {
+      const user = userEvent.setup();
+      const full =
+        "磁盘空间不够：装 Claude Desktop 需要大约 2 GB。请清理一些空间后重试";
+      show("in", {
+        platform: "macos",
+        noDesktop: true,
+        installEnds: { error: full },
+      });
+      await user.click(await screen.findByRole("button", { name: "一键安装" }));
+      expect(await screen.findByText(full)).toBeInTheDocument();
+      expect(screen.queryByText(/已打开官网下载页/)).toBeNull();
+    });
+
+    it("waits for 重试 when the keychain keeps the sign-ins shut", async () => {
+      const user = userEvent.setup();
+      const why =
+        "钥匙串没有让兔啃读取「site.tuken.desktop」，登录信息暂时打不开。点重试，在钥匙串的弹窗里选「允许」";
+      const invoke = show("in", { platform: "macos", vaultLocked: why });
+      expect(
+        await screen.findByRole("heading", { name: "登录信息暂时打不开" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(why);
+      // Not the sign-in form: signing in would only ask the keychain again.
+      expect(screen.queryByLabelText("密码")).toBeNull();
+      expect(calls(invoke, "vault_retry")).toHaveLength(0);
+      await user.click(screen.getByRole("button", { name: "重试" }));
+      expect(await screen.findByText("$28.50")).toBeInTheDocument();
+      expect(calls(invoke, "vault_retry")).toHaveLength(1);
+    });
+
+    it("lets the window follow the system look while the app does", () => {
+      const invoke = vi.fn(createMock("out", { platform: "macos" }));
+      installMock(invoke);
+      const sent = () =>
+        invoke.mock.calls
+          .filter(([cmd]) => cmd === "set_backdrop_theme")
+          .map(([, args]) => args);
+      applyTheme("system");
+      applyTheme("dark");
+      expect(sent()).toEqual([
+        { dark: false, system: true },
+        { dark: true, system: false },
+      ]);
     });
   });
 });

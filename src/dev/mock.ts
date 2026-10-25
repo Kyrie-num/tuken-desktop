@@ -43,10 +43,25 @@ export function createMock(
     inviteOnly = false,
     /** Daily check-in: on, off in the admin, or not on the server yet. */
     checkin = "on" as "on" | "off" | "none",
+    /** The system the app runs on. */
+    platform = "windows" as "windows" | "macos",
     /** The first account was made long ago, not just now. */
     oldAccount = false,
+    /** Installing waits for `mock:release_install`, so a test can send progress. */
+    holdInstall = false,
+    /** How installing Claude Desktop ends: as usual, in the browser, or with an error. */
+    installEnds = "done" as "done" | "browser" | { error: string },
+    /** macOS: the keychain keeps the accounts shut until 重试. */
+    vaultLocked = "",
+    /** The accounts couldn't be read and were set aside: told once. */
+    vaultNotice = "",
   } = {},
 ) {
+  let locked = vaultLocked;
+  let notice = vaultNotice;
+  let releaseInstall: (() => void) | undefined;
+  /** Who listens to which event: [event, callback id]. */
+  const listeners: [string, number][] = [];
   const wait = (ms = delay) =>
     ms ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
   const accounts = [
@@ -397,7 +412,15 @@ export function createMock(
     };
     switch (action) {
       case "state":
-        return view();
+      case "vault_retry": {
+        if (action === "vault_retry") locked = "";
+        if (locked)
+          return { active: null, accounts: [], orders: [], locked: locked };
+        const v: Record<string, unknown> = view();
+        if (notice) v.notice = notice;
+        notice = "";
+        return v;
+      }
       case "update_check":
         return update ? { version: update, notes: "修复了一些问题。" } : null;
       case "update_install":
@@ -672,8 +695,21 @@ export function createMock(
         return null;
       case "desktop_install":
         await wait(delay * 6);
+        if (holdInstall) await new Promise<void>((r) => (releaseInstall = r));
+        if (typeof installEnds === "object") throw installEnds.error;
+        if (installEnds === "browser") return { method: "browser" };
         db.desktop.installed = true;
-        return { method: "winget" };
+        return { method: platform === "macos" ? "dmg" : "winget" };
+      case "mock:release_install":
+        releaseInstall?.();
+        return null;
+      case "mock:emit":
+        for (const [event, id] of listeners)
+          if (event === args.event)
+            (window as any)[`_${id}`]?.({ event, id, payload: args.payload });
+        return null;
+      case "platform":
+        return platform;
       case "desktop_open":
       case "quit":
       case "panel_show":
@@ -681,11 +717,12 @@ export function createMock(
         return null;
       case "backdrop":
       case "set_backdrop_theme":
-        return "mica";
+        return platform === "macos" ? "vibrancy" : "mica";
       case "plugin:window|is_maximized":
         return false;
       case "plugin:event|listen":
-        return 1;
+        listeners.push([args.event, args.handler]);
+        return listeners.length;
       default:
         if (cmd.startsWith("plugin:")) return null;
         throw `模拟数据不支持：${cmd}`;

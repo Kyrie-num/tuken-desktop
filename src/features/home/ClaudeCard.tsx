@@ -18,6 +18,8 @@ import {
 } from "@/components/Menu";
 import { desktop } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { installText, useInstallStep } from "@/lib/install";
+import { isMac } from "@/lib/platform";
 import { qk, useDesktop, useGroups, useKeys } from "@/lib/queries";
 import { useAction, useConnect, useSession, useUi } from "@/app/context";
 import { modelInfo } from "@/lib/models";
@@ -76,14 +78,21 @@ export function ClaudeCard() {
   const chosen = claude.find((g) => g.id === groupId)?.id ?? claude[0]?.id;
   const desktopKey = keys.data?.find((k) => k.in_desktop);
   const installing = !!status?.installing || install.busy;
+  const progress = installText(useInstallStep(installing));
+  const mac = isMac();
 
   const runInstall = () =>
     install.run(async () => {
       const r = await desktop.install();
       client.setQueryData(qk.desktop, await desktop.status());
       if (r.method === "browser")
-        toast.info("没有找到 winget，已打开官网下载页");
-      else if (r.method === "winget") toast.success("Claude Desktop 安装好了");
+        toast.info(
+          mac
+            ? "没能自动安装，已打开官网下载页"
+            : "没有找到 winget，已打开官网下载页",
+        );
+      else if (r.method === "winget" || r.method === "dmg")
+        toast.success("Claude Desktop 安装好了");
     });
 
   const open = () =>
@@ -132,7 +141,9 @@ export function ClaudeCard() {
           <div className="skeleton h-10" />
         </div>
       ) : !status.supported ? (
-        <p className="mt-5 text-body text-ink/70">目前只支持 Windows。</p>
+        <p className="mt-5 text-body text-ink/70">
+          目前只支持 Windows 和 macOS。
+        </p>
       ) : status.connected && status.installed ? (
         <div className="mt-5 flex flex-1 flex-col justify-between gap-5">
           <div className="flex items-center gap-3">
@@ -188,10 +199,13 @@ export function ClaudeCard() {
             title="安装 Claude Desktop"
             detail={
               installing
-                ? "正在从 Anthropic 官方下载安装，通常 1 到 3 分钟"
+                ? (progress ??
+                  "正在从 Anthropic 官方下载安装，通常 1 到 3 分钟")
                 : status.installed
                   ? `已安装${status.version ? `，版本 ${status.version}` : ""}`
-                  : "从 Anthropic 官方下载，安装包由 winget 校验"
+                  : mac
+                    ? "从 Anthropic 官方下载，安装前检查签名"
+                    : "从 Anthropic 官方下载，安装包由 winget 校验"
             }
           >
             {!status.installed && (

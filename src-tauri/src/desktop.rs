@@ -1,5 +1,6 @@
-//! Claude Desktop on this PC: find the installed app, install it through
-//! winget, and open or restart it so a new gateway profile takes effect.
+//! Claude Desktop on this computer: find the installed app, install it
+//! (winget on Windows, Anthropic's signed disk image on macOS), and open or
+//! restart it so a new gateway profile takes effect.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,8 +11,10 @@ use serde_json::{json, Value};
 use crate::claude_config;
 
 const DOWNLOAD_PAGE: &str = "https://claude.ai/download";
+#[cfg(not(target_os = "macos"))]
 const WINGET_ID: &str = "Anthropic.Claude";
 /// Anthropic's MSIX publisher id: package family `Claude_pzs8sxrjxfjjc`.
+#[cfg(windows)]
 const MSIX_PUBLISHER_ID: &str = "pzs8sxrjxfjjc";
 
 static INSTALLING: AtomicBool = AtomicBool::new(false);
@@ -20,7 +23,11 @@ struct Install {
     version: String,
     exe: PathBuf,
     /// Set for the MSIX package, which has to be started through its AUMID.
+    #[cfg(not(target_os = "macos"))]
     aumid: Option<String>,
+    /// macOS: Claude.app, which Launch Services opens.
+    #[cfg(target_os = "macos")]
+    app: PathBuf,
 }
 
 fn parse_version(v: &str) -> Vec<u32> {
@@ -95,7 +102,35 @@ fn find_install() -> Option<Install> {
     })
 }
 
-#[cfg(not(windows))]
+/// Claude.app in /Applications or ~/Applications, known by its bundle id;
+/// the newer one if both are there, as `open -b` would pick.
+#[cfg(target_os = "macos")]
+fn find_install() -> Option<Install> {
+    let mut best: Option<(Vec<u32>, Install)> = None;
+    for dir in crate::desktop_mac::applications() {
+        let app = dir.join("Claude.app");
+        let Some(bundle) = crate::desktop_mac::read_bundle(&app) else {
+            continue;
+        };
+        if !bundle.exe.is_file() {
+            continue;
+        }
+        let parsed = parse_version(&bundle.version);
+        if best.as_ref().is_none_or(|(v, _)| parsed > *v) {
+            best = Some((
+                parsed,
+                Install {
+                    version: bundle.version,
+                    exe: bundle.exe,
+                    app,
+                },
+            ));
+        }
+    }
+    best.map(|(_, install)| install)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn find_install() -> Option<Install> {
     None
 }
@@ -161,7 +196,12 @@ fn running_pids(exe: &std::path::Path) -> Vec<u32> {
     pids
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn running_pids(exe: &std::path::Path) -> Vec<u32> {
+    crate::desktop_mac::running_pids(exe)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn running_pids(_: &std::path::Path) -> Vec<u32> {
     Vec::new()
 }
@@ -181,9 +221,65 @@ fn terminate(pids: &[u32]) {
     }
 }
 
-#[cfg(not(windows))]
+/// Stops the running Claude Desktop before it is opened again. On macOS it is
+/// asked to quit as ⌘Q does (see `desktop_mac::signal`); what still runs
+/// after 10 seconds is stopped, as Windows stops it right away.
+async fn quit_running(install: &Install) {
+    let pids = running_pids(&install.exe);
+    if pids.is_empty() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    crate::desktop_mac::signal(&pids, libc::SIGTERM);
+    #[cfg(not(target_os = "macos"))]
+    terminate(&pids);
+    for _ in 0..40 {
+        if running_pids(&install.exe).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let left = running_pids(&install.exe);
+        if !left.is_empty() {
+            crate::desktop_mac::signal(&left, libc::SIGKILL);
+            for _ in 0..20 {
+                if running_pids(&install.exe).is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        }
+        // Launch Services takes a moment to see the app gone; opening it
+        // before then only brings back the one that is quitting.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn terminate(_: &[u32]) {}
 
+/// Opens Claude.app (the one found, then by bundle id).
+#[cfg(target_os = "macos")]
+fn launch(install: &Install) -> Result<(), String> {
+    let open = |args: &[&std::ffi::OsStr]| {
+        std::process::Command::new("/usr/bin/open")
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    if open(&[install.app.as_os_str()])
+        || open(&["-b".as_ref(), crate::desktop_mac::BUNDLE_ID.as_ref()])
+    {
+        Ok(())
+    } else {
+        Err("无法启动 Claude Desktop".to_string())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 fn launch(install: &Install) -> Result<(), String> {
     let mut command = match &install.aumid {
         Some(aumid) => {
@@ -207,7 +303,7 @@ pub async fn desktop_status(app: tauri::AppHandle) -> Result<Value, String> {
         .is_some_and(|i| !running_pids(&i.exe).is_empty());
     let paths = crate::config_paths(&app)?;
     Ok(json!({
-        "supported": cfg!(windows),
+        "supported": cfg!(any(windows, target_os = "macos")),
         "installed": install.is_some(),
         "version": install.as_ref().map(|i| i.version.clone()),
         "running": running,
@@ -239,8 +335,46 @@ pub async fn desktop_models(
     .map_err(|_| "写入配置失败".to_string())?
 }
 
+/// Installs Claude Desktop from Anthropic's disk image once its signature and
+/// notarization check out, reporting progress as `tuken://desktop-install`
+/// events. Something on this Mac in the way (no room, no permission) is said
+/// as it is; any other failure opens the official download page instead, as
+/// Windows does without winget.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
+    use tauri::Emitter;
+    use tauri_plugin_opener::OpenerExt;
+    if find_install().is_some() {
+        return Ok(json!({"method": "none"}));
+    }
+    if INSTALLING.swap(true, Ordering::SeqCst) {
+        return Err("Claude Desktop 正在安装，请稍候".into());
+    }
+    let events = app.clone();
+    let result = crate::desktop_mac::install(move |step| {
+        let _ = events.emit("tuken://desktop-install", step);
+    })
+    .await;
+    INSTALLING.store(false, Ordering::SeqCst);
+    match result {
+        Ok(_) if find_install().is_some() => Ok(json!({"method": "dmg"})),
+        Err(crate::desktop_mac::Failure::Local(why)) => Err(why),
+        outcome => {
+            if let Err(crate::desktop_mac::Failure::Elsewhere(why)) = &outcome {
+                log::warn!("Claude Desktop install failed: {why}");
+            }
+            app.opener()
+                .open_url(DOWNLOAD_PAGE, None::<&str>)
+                .map_err(|_| "无法打开下载页面".to_string())?;
+            Ok(json!({"method": "browser"}))
+        }
+    }
+}
+
 /// Installs Claude Desktop with winget (which verifies the installer hash), or
 /// opens the official download page when winget is missing.
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
 pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
     use tauri_plugin_opener::OpenerExt;
@@ -307,16 +441,7 @@ pub async fn desktop_open(restart: bool) -> Result<(), String> {
         if cfg!(debug_assertions) {
             return Err("开发版不会重启 Claude Desktop，请手动重启".into());
         }
-        let pids = running_pids(&install.exe);
-        if !pids.is_empty() {
-            terminate(&pids);
-            for _ in 0..40 {
-                if running_pids(&install.exe).is_empty() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-        }
+        quit_running(&install).await;
     }
     launch(&install)
 }
@@ -342,5 +467,116 @@ mod tests {
             install.exe,
             running_pids(&install.exe)
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn wait(seconds: u64, done: impl Fn() -> bool) -> bool {
+        for _ in 0..seconds * 4 {
+            if done() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        done()
+    }
+
+    /// All of it on a Mac without Claude Desktop (GitHub's macOS runner):
+    /// install it from Anthropic's disk image, write 兔啃's profile, open it
+    /// and see it take the profile, then restart it the way 兔啃 does. It
+    /// installs and quits Claude Desktop, so it only runs with TUKEN_E2E=1:
+    /// `TUKEN_E2E=1 cargo test macos_e2e -- --ignored --nocapture`.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore]
+    async fn macos_e2e_install_connect_open_restart() {
+        use crate::desktop_mac::Step;
+        assert_eq!(
+            std::env::var("TUKEN_E2E").as_deref(),
+            Ok("1"),
+            "this installs and quits Claude Desktop; set TUKEN_E2E=1"
+        );
+        if find_install().is_none() {
+            let steps = std::sync::Mutex::new(Vec::new());
+            let app = crate::desktop_mac::install(|s| steps.lock().unwrap().push(s))
+                .await
+                .expect("Claude Desktop installs from its disk image");
+            let steps = steps.into_inner().unwrap();
+            println!("installed {app:?}; steps {:?}", steps.last());
+            assert!(steps.iter().any(|s| matches!(s, Step::Download { .. })));
+            assert!(steps.contains(&Step::Verify) && steps.contains(&Step::Copy));
+        }
+        let install = find_install().expect("the installed Claude Desktop is found");
+        println!("Claude Desktop {} at {:?}", install.version, install.app);
+        assert!(install.exe.ends_with("Contents/MacOS/Claude"));
+
+        // 兔啃's profile, written as connecting writes it, at a gateway that
+        // doesn't exist, so nothing reaches 兔啃's server.
+        let backups = tempfile::tempdir().unwrap();
+        let paths = claude_config::Paths::system(backups.path().into()).unwrap();
+        claude_config::connect_desktop(&paths, "sk-tuken-e2e").unwrap();
+        claude_config::set_desktop_models(&paths, &["claude-opus-4-1".into()], "max").unwrap();
+        let home = dirs::home_dir().unwrap();
+        let threep = home.join("Library/Application Support/Claude-3p");
+        let profile = threep.join(format!("configLibrary/{}.json", claude_config::PROFILE_ID));
+        let text = std::fs::read_to_string(&profile).unwrap();
+        std::fs::write(
+            &profile,
+            text.replace(crate::api::SITE, "https://gateway.invalid"),
+        )
+        .unwrap();
+
+        // Claude Desktop opens on the profile: it moves its data to Claude-3p,
+        // where Chromium then keeps its "Local State".
+        launch(&install).unwrap();
+        assert!(
+            wait(60, || !running_pids(&install.exe).is_empty()).await,
+            "Claude Desktop runs"
+        );
+        assert!(
+            wait(120, || threep.join("Local State").exists()).await,
+            "Claude Desktop runs from its third-party data folder"
+        );
+        let meta = std::fs::read_to_string(threep.join("configLibrary/_meta.json")).unwrap();
+        assert!(meta.contains(claude_config::PROFILE_ID), "{meta}");
+        // Its log is in Logs/Claude-3p too; what it says of the profile.
+        let log = std::fs::read_to_string(home.join("Library/Logs/Claude-3p/main.log"))
+            .expect("Claude Desktop logs as a third-party install");
+        let about: Vec<&str> = log
+            .lines()
+            .filter(|l| {
+                let l = l.to_lowercase();
+                [
+                    "3p",
+                    "inference",
+                    "gateway",
+                    "configlibrary",
+                    "managed config",
+                ]
+                .iter()
+                .any(|w| l.contains(w))
+            })
+            .take(40)
+            .collect();
+        println!("main.log about the profile:\n{}", about.join("\n"));
+
+        // Restarted the way 兔啃 does: asked to quit, it quits within the
+        // 10 seconds, and opens again.
+        let before = running_pids(&install.exe);
+        let started = std::time::Instant::now();
+        quit_running(&install).await;
+        let took = started.elapsed();
+        println!("quit in {took:?}");
+        assert!(running_pids(&install.exe).is_empty(), "Claude Desktop quit");
+        assert!(
+            took < Duration::from_secs(10),
+            "it quit when asked: {took:?}"
+        );
+        launch(&install).unwrap();
+        assert!(
+            wait(60, || !running_pids(&install.exe).is_empty()).await,
+            "Claude Desktop opens again"
+        );
+        assert_ne!(running_pids(&install.exe), before);
+        quit_running(&install).await;
     }
 }

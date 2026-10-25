@@ -1,7 +1,8 @@
 name: 发布
 
-# A tag like v0.1.0 builds the Windows installer and leaves a draft release
-# with it, its update signature and latest.json for the in-app updater.
+# A tag like v0.1.0 builds the Windows installer and the macOS disk image and
+# leaves a draft release with them, their update archives and signatures,
+# and latest.json for the in-app updater.
 on:
   push:
     tags: ["v*"]
@@ -9,7 +10,7 @@ on:
 permissions:
   contents: write
 
-# Actions are pinned to commits: this job holds the update signing key, and a
+# Actions are pinned to commits: these jobs hold the update signing key, and a
 # moved tag must not change what runs next to it.
 
 jobs:
@@ -37,6 +38,72 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 兔啃 ${{ github.ref_name }}
-          releaseBody: 下载下面的 Tuken_…_x64-setup.exe，双击安装。
+          releaseBody: |
+            Windows：下载 Tuken_…_x64-setup.exe，双击安装。
+            macOS：下载 Tuken_…_universal.dmg，打开后把兔啃拖进「应用程序」。第一次打开时如果被拦下，到「系统设置 → 隐私与安全性」点「仍要打开」。
           releaseDraft: true
           includeUpdaterJson: true
+
+  # One disk image for Apple silicon and Intel Macs: Tuken_<version>_universal.dmg
+  # (the download site links that name), and Tuken_universal.app.tar.gz with
+  # its .sig for the updater, which latest.json gets as darwin-aarch64 and
+  # darwin-x86_64.
+  macos:
+    # After Windows: both jobs add to the same draft release and latest.json,
+    # which is read, merged and written back.
+    needs: windows
+    runs-on: macos-latest
+    env:
+      # Ad hoc signed ("-" in tauri.macos.conf.json) until there is an Apple
+      # Developer ID. Then set the secrets APPLE_CERTIFICATE (the .p12 in
+      # base64), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY
+      # ("Developer ID Application: …"), APPLE_ID, APPLE_PASSWORD (an
+      # app-specific password) and APPLE_TEAM_ID: the build is then signed
+      # with it and notarized by Apple.
+      DEVELOPER_ID: ${{ secrets.APPLE_CERTIFICATE != '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: rustup toolchain install
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - name: Build (ad hoc signature)
+        if: env.DEVELOPER_ID != 'true'
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 兔啃 ${{ github.ref_name }}
+          releaseDraft: true
+          includeUpdaterJson: true
+          args: --target universal-apple-darwin
+      - name: Build (Developer ID, notarized)
+        if: env.DEVELOPER_ID == 'true'
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 兔啃 ${{ github.ref_name }}
+          releaseDraft: true
+          includeUpdaterJson: true
+          args: --target universal-apple-darwin

@@ -47,7 +47,7 @@ export function BalanceLens() {
       {/* What the lens bends: drops of SUSTech orange and cyan. */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 -z-10"
+        className="lens-drops pointer-events-none absolute inset-0 -z-10"
       >
         <div className="absolute left-[8%] top-[18%] h-36 w-36 rounded-full bg-orange/55 blur-2xl" />
         <div className="absolute bottom-[6%] right-[22%] h-40 w-48 rounded-full bg-cyan/50 blur-2xl" />

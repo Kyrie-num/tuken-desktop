@@ -1,0 +1,45 @@
+name: Claude Desktop 端到端
+
+# On a Mac without Claude Desktop (GitHub's): installs it from Anthropic's
+# disk image the way 兔啃 does, writes 兔啃's profile, opens it and checks it
+# runs on the profile, then restarts it as 兔啃 does. Weekly, by hand, and
+# for pushes that change that code.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 2 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - src-tauri/src/desktop*.rs
+      - src-tauri/src/claude_config.rs
+      - .github/workflows/e2e.yml
+
+permissions:
+  contents: read
+
+jobs:
+  claude-desktop:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      # The Rust build embeds the built pages.
+      - run: pnpm build:renderer
+      # A test build writes Claude's files only with TUKEN_HOME set: here it
+      # is this Mac's own home, where Claude Desktop reads them.
+      - name: Install, connect, open and restart Claude Desktop
+        working-directory: src-tauri
+        env:
+          TUKEN_E2E: "1"
+        run: TUKEN_HOME="$HOME" cargo test macos_e2e -- --ignored --nocapture

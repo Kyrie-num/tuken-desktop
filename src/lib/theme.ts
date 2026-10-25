@@ -14,11 +14,11 @@ const systemDark = () =>
   typeof matchMedia === "function" &&
   matchMedia("(prefers-color-scheme: dark)").matches;
 
-/** Sets the page theme and tints the window's Mica to match. */
+/** Sets the page theme and tints the window's material to match. */
 export function applyTheme(theme: Theme) {
   const dark = theme === "dark" || (theme === "system" && systemDark());
   document.documentElement.classList.toggle("dark", dark);
-  windowMaterial.matchTheme(dark).catch(() => {});
+  windowMaterial.matchTheme(dark, theme === "system").catch(() => {});
 }
 
 export function useTheme() {

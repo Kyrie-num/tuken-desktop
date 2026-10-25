@@ -18,6 +18,10 @@ export type AppState = {
   active: number | null;
   accounts: AccountSummary[];
   orders: Order[];
+  /** macOS: the keychain keeps the saved sign-ins shut; why, until 重试. */
+  locked?: string;
+  /** Saved sign-ins that couldn't be read were set aside: said once. */
+  notice?: string;
 };
 /** The server's sign-up rules; `available` once it has the native sign-in API. */
 export type AuthConfig =
@@ -199,20 +203,31 @@ export function tuken<T>(action: string, input?: Record<string, unknown>) {
   return invoke<T>("tuken", { action, input });
 }
 
+/** How far an install has got; macOS reports it as `tuken://desktop-install`. */
+export type InstallStep =
+  { step: "download"; percent: number } | { step: "verify" } | { step: "copy" };
+
 export const desktop = {
   status: () => invoke<DesktopStatus>("desktop_status"),
+  /** `dmg`: from Anthropic's disk image (macOS); `browser`: the download page. */
   install: () =>
-    invoke<{ method: "winget" | "browser" | "none" }>("desktop_install"),
+    invoke<{ method: "winget" | "dmg" | "browser" | "none" }>(
+      "desktop_install",
+    ),
   open: (restart = false) => invoke<void>("desktop_open", { restart }),
   /** The default model goes first in `models`. */
   setModels: (models: string[], effort: Effort) =>
     invoke<void>("desktop_models", { models, effort }),
 };
 
+/** What shows through the window: Windows 11 Mica, macOS vibrancy, or nothing. */
+export type Material = "mica" | "vibrancy" | "none";
+
 export const windowMaterial = {
-  get: () => invoke<"mica" | "none">("backdrop"),
-  matchTheme: (dark: boolean) =>
-    invoke<"mica" | "none">("set_backdrop_theme", { dark }),
+  get: () => invoke<Material>("backdrop"),
+  /** `system`: the app follows the system's look (macOS lets the window too). */
+  matchTheme: (dark: boolean, system = false) =>
+    invoke<Material>("set_backdrop_theme", { dark, system }),
 };
 
 /** Error text the native side uses for a token the server rejected. */

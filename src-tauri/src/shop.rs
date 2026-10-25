@@ -292,14 +292,16 @@ pub async fn sync(app: &AppHandle, state: &State) -> Result<(), String> {
 }
 
 /// Keeps finishing paid orders in the background, also after a restart.
+/// Only while the vault is open: opening it is left to the page, since on
+/// macOS that may ask the user.
 pub fn start_worker(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(15)).await;
             let state = app.state::<State>();
-            let open = match state.vault().await {
-                Ok(v) => v.orders.iter().any(Order::is_open),
-                Err(_) => false,
+            let open = match state.vault_if_open().await {
+                Some(v) => v.orders.iter().any(Order::is_open),
+                None => false,
             };
             if open {
                 let _ = sync(&app, &state).await;
