@@ -415,8 +415,9 @@ mod keychain {
                 }
                 let tags: CFArray<CFType> = CFArray::wrap_under_create_rule(tags);
                 let partition = tags.iter().any(|t| {
-                    t.downcast::<CFString>()
-                        .is_some_and(|t| t.to_string() == "ACLAuthorizationPartitionID")
+                    t.downcast::<CFString>().is_some_and(|t| {
+                        t == CFString::from_static_string("ACLAuthorizationPartitionID")
+                    })
                 });
                 if partition {
                     println!("removing a partition entry from the new access");
