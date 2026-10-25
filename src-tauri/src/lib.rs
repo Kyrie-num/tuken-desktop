@@ -301,9 +301,11 @@ fn traffic_light_y(product_version: &str) -> f64 {
 /// macOS builds the main window here (`create: false` in
 /// tauri.macos.conf.json): Tauri reads the traffic lights' place only when
 /// it builds a window, and the right place depends on the macOS version.
+/// It goes in the window's config: the page is a child webview (Tauri's
+/// `unstable` multi-webview), and only the window applies it then.
 #[cfg(target_os = "macos")]
 fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let config = app
+    let mut config = app
         .config()
         .app
         .windows
@@ -320,9 +322,11 @@ fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
                 .map(str::to_string)
         })
         .unwrap_or_default();
-    tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
-        .traffic_light_position(tauri::LogicalPosition::new(20.0, traffic_light_y(&version)))
-        .build()?;
+    config.traffic_light_position = Some(tauri::utils::config::LogicalPosition {
+        x: 20.0,
+        y: traffic_light_y(&version),
+    });
+    tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?.build()?;
     Ok(())
 }
 

@@ -34,7 +34,7 @@ irm https://download.tuken.site/install.ps1 | iex
 - **Claude Desktop**：接入时在它的配置里添加一个叫「兔啃」的配置，不会覆盖其他工具（比如 CC Switch）的配置。断开时移除。
 - **Claude Code**：接入时在 `~/.claude/settings.json` 里写入兔啃的地址和密钥，并去掉指向其他服务的设置。断开时删掉兔啃的设置。
 - 第一次修改这些文件之前，兔啃会先备份原文件。
-- 登录信息加密保存在本机：Windows 上用系统自带的加密，只有你的 Windows 账户能读取；macOS 上的密钥放在「钥匙串」里。
+- 登录信息加密保存在本机：Windows 上用系统自带的加密，只有你的 Windows 账户能读取；macOS 上的密钥放在「钥匙串」里。兔啃还没有 Apple 签名，每次更新后 macOS 会问一次兔啃能否使用钥匙串里的这把密钥，输入电脑密码后点「始终允许」。
 - 在 macOS 上，Claude Desktop 的配置在 `~/Library/Application Support/Claude-3p`。
 
 ## 从源码构建
