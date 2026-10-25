@@ -217,12 +217,14 @@ enum KeyLookup {
 /// login keychain named after the app's identifier (`site.tuken.desktop` in
 /// 钥匙串访问; a dev build has its own `.dev` one).
 ///
-/// Its access list lets any application read it, the way any program of the
-/// same Windows user can unprotect 兔啃's DPAPI file: what guards the key is
-/// the login keychain itself (encrypted on disk, unlocked by the user's
-/// password), not a list of trusted apps. Such a list would name 兔啃 by its
-/// ad-hoc code signature, which changes with every update, and macOS would
-/// then ask for the password after each one.
+/// Only 兔啃 reads it without asking. After an update macOS asks once: it
+/// files each keychain item under the code that made it (its "partition",
+/// for ad-hoc signed code the code's hash), so a new build of 兔啃 is another
+/// app to it until the user lets it in ("始终允许"). An access list for any
+/// application doesn't change that (tested on GitHub's Macs: the item still
+/// gets `partition_id: cdhash:…`, and moving it takes the keychain password).
+/// With a Developer ID the partition becomes the team and updates read it
+/// unasked.
 ///
 /// The key is only ever added, never replaced: whatever it sealed would be
 /// lost with it.
@@ -231,13 +233,11 @@ mod keychain {
     use std::ptr;
     use std::sync::Mutex;
 
-    use core_foundation::array::CFArray;
-    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::base::TCFType;
     use core_foundation::data::CFData;
     use core_foundation::dictionary::CFDictionary;
     use core_foundation::string::CFString;
-    use core_foundation_sys::array::CFArrayRef;
-    use core_foundation_sys::base::{CFRelease, CFTypeRef, OSStatus};
+    use core_foundation_sys::base::OSStatus;
     use core_foundation_sys::string::CFStringRef;
     use security_framework::passwords::{generic_password, PasswordOptions};
     use security_framework_sys::item::{
@@ -251,32 +251,6 @@ mod keychain {
     /// errSecItemNotFound, errSecDuplicateItem.
     const NOT_FOUND: OSStatus = -25300;
     const DUPLICATE: OSStatus = -25299;
-
-    // The access-list calls are old (deprecated since macOS 10.10) but are
-    // still the way to give a file-based keychain item its access list.
-    #[link(name = "Security", kind = "framework")]
-    extern "C" {
-        static kSecAttrAccess: CFStringRef;
-        static kSecACLAuthorizationDecrypt: CFStringRef;
-        fn SecAccessCreate(
-            descriptor: CFStringRef,
-            trusted: CFArrayRef,
-            access: *mut CFTypeRef,
-        ) -> OSStatus;
-        fn SecAccessCopyMatchingACLList(access: CFTypeRef, authorization: CFTypeRef) -> CFArrayRef;
-        fn SecACLCopyContents(
-            acl: CFTypeRef,
-            apps: *mut CFArrayRef,
-            description: *mut CFStringRef,
-            prompt: *mut u16,
-        ) -> OSStatus;
-        fn SecACLSetContents(
-            acl: CFTypeRef,
-            apps: CFArrayRef,
-            description: CFStringRef,
-            prompt: u16,
-        ) -> OSStatus;
-    }
 
     /// Read once per run: macOS may ask the user, and should only once.
     static KEYS: Mutex<Vec<(String, [u8; 32])>> = Mutex::new(Vec::new());
@@ -302,7 +276,7 @@ mod keychain {
             Err(e) => {
                 log::warn!("keychain read of {service} failed: {}", e.code());
                 KeyLookup::Unusable(format!(
-                    "钥匙串没有让兔啃读取「{service}」，登录信息暂时打不开。点重试，在钥匙串的弹窗里选「允许」"
+                    "钥匙串没有让兔啃读取「{service}」，登录信息暂时打不开。点重试，在钥匙串的弹窗里输入电脑密码，选「始终允许」"
                 ))
             }
         }
@@ -333,114 +307,30 @@ mod keychain {
         }
     }
 
-    /// Adds the key with an access list for any application. Fails with
-    /// `errSecDuplicateItem` rather than replace a key that is there.
+    /// Adds the key. Fails with `errSecDuplicateItem` rather than replace a
+    /// key that is there (SecItemAdd alone, no update).
     unsafe fn add(service: &str, key: &[u8; 32]) -> OSStatus {
-        let access = match any_application(service) {
-            Ok(access) => access,
-            Err(status) => return status,
-        };
         let name = |s: CFStringRef| CFString::wrap_under_get_rule(s);
         let query = CFDictionary::from_CFType_pairs(&[
             (name(kSecClass), name(kSecClassGenericPassword).as_CFType()),
             (name(kSecAttrService), CFString::new(service).as_CFType()),
             (name(kSecAttrAccount), CFString::new(ACCOUNT).as_CFType()),
             (name(kSecValueData), CFData::from_buffer(key).as_CFType()),
-            (name(kSecAttrAccess), access),
         ]);
         SecItemAdd(query.as_concrete_TypeRef(), ptr::null_mut())
     }
 
-    /// An access object whose decrypt entries name no trusted apps, which
-    /// means any application may read the item.
-    unsafe fn any_application(name: &str) -> Result<CFType, OSStatus> {
-        let mut access: CFTypeRef = ptr::null();
-        let status = SecAccessCreate(
-            CFString::new(name).as_concrete_TypeRef(),
-            ptr::null(),
-            &mut access,
-        );
-        if status != 0 || access.is_null() {
-            return Err(status);
-        }
-        let access = CFType::wrap_under_create_rule(access);
-        let acls =
-            SecAccessCopyMatchingACLList(access.as_CFTypeRef(), kSecACLAuthorizationDecrypt.cast());
-        if acls.is_null() {
-            return Err(-50); // errSecParam
-        }
-        let acls: CFArray<CFType> = CFArray::wrap_under_create_rule(acls);
-        for acl in acls.iter() {
-            let (mut apps, mut description, mut prompt) = (ptr::null(), ptr::null(), 0u16);
-            let status =
-                SecACLCopyContents(acl.as_CFTypeRef(), &mut apps, &mut description, &mut prompt);
-            if status != 0 {
-                return Err(status);
-            }
-            let status = SecACLSetContents(acl.as_CFTypeRef(), ptr::null(), description, prompt);
-            if !apps.is_null() {
-                CFRelease(apps.cast());
-            }
-            if !description.is_null() {
-                CFRelease(description.cast());
-            }
-            if status != 0 {
-                return Err(status);
-            }
-        }
-        Ok(access)
-    }
-
-    /// Diagnostics: like `add`, with any partition-ID entry taken out of the
-    /// access first (does SecItemAdd put its own back?).
+    /// Forgets what this run read, as a new run would; for tests.
     #[cfg(test)]
-    pub unsafe fn add_without_partitions(service: &str, key: &[u8; 32]) -> OSStatus {
-        #[link(name = "Security", kind = "framework")]
-        extern "C" {
-            fn SecAccessCopyACLList(access: CFTypeRef, list: *mut CFArrayRef) -> OSStatus;
-            fn SecACLCopyAuthorizations(acl: CFTypeRef) -> CFArrayRef;
-            fn SecACLRemove(acl: CFTypeRef) -> OSStatus;
-        }
-        let access = match any_application(service) {
-            Ok(access) => access,
-            Err(status) => return status,
-        };
-        let mut list: CFArrayRef = ptr::null();
-        if SecAccessCopyACLList(access.as_CFTypeRef(), &mut list) == 0 && !list.is_null() {
-            let acls: CFArray<CFType> = CFArray::wrap_under_create_rule(list);
-            for acl in acls.iter() {
-                let tags = SecACLCopyAuthorizations(acl.as_CFTypeRef());
-                if tags.is_null() {
-                    continue;
-                }
-                let tags: CFArray<CFType> = CFArray::wrap_under_create_rule(tags);
-                let partition = tags.iter().any(|t| {
-                    t.downcast::<CFString>().is_some_and(|t| {
-                        t == CFString::from_static_string("ACLAuthorizationPartitionID")
-                    })
-                });
-                if partition {
-                    println!("removing a partition entry from the new access");
-                    SecACLRemove(acl.as_CFTypeRef());
-                }
-            }
-        }
-        let name = |s: CFStringRef| CFString::wrap_under_get_rule(s);
-        let query = CFDictionary::from_CFType_pairs(&[
-            (name(kSecClass), name(kSecClassGenericPassword).as_CFType()),
-            (name(kSecAttrService), CFString::new(service).as_CFType()),
-            (name(kSecAttrAccount), CFString::new(ACCOUNT).as_CFType()),
-            (name(kSecValueData), CFData::from_buffer(key).as_CFType()),
-            (name(kSecAttrAccess), access),
-        ]);
-        SecItemAdd(query.as_concrete_TypeRef(), ptr::null_mut())
+    pub fn forget_read(service: &str) {
+        KEYS.lock().unwrap().retain(|(s, _)| s != service);
     }
 
     /// Removes a key; for tests, which use their own service names.
     #[cfg(test)]
     pub fn forget(service: &str) {
         let _ = security_framework::passwords::delete_generic_password(service, ACCOUNT);
-        KEYS.lock().unwrap().retain(|(s, _)| s != service);
+        forget_read(service);
     }
 }
 
@@ -738,44 +628,37 @@ mod tests {
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 3);
     }
 
-    /// An update of 兔啃 gets a new ad-hoc signature; the vault key must still
-    /// read without macOS asking. A copy of this test program, signed anew,
-    /// reads the key 兔啃 adds, and is refused an item with the default
-    /// access (else this proves nothing here). It adds two keychain items and
-    /// removes them: `cargo test macos_keychain -- --ignored`.
+    /// Keys are only ever added: one that is there is the key, and a new
+    /// one stays the key for the next run.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_keychain_key_is_only_added_never_replaced() {
+        let service = format!("site.tuken.desktop.test.{}", uuid::Uuid::new_v4());
+        let theirs = [7u8; 32];
+        security_framework::passwords::set_generic_password(&service, keychain::ACCOUNT, &theirs)
+            .unwrap();
+        assert_eq!(keychain::key(&service).unwrap(), theirs);
+        keychain::forget(&service);
+
+        let made = keychain::key(&service).unwrap();
+        keychain::forget_read(&service);
+        assert_eq!(keychain::key(&service).unwrap(), made);
+        keychain::forget(&service);
+    }
+
+    /// Why 兔啃 asks for the keychain after an update while it is ad-hoc
+    /// signed: a copy of this test program signed anew, as an update is,
+    /// can't read the key without the user. If this ever fails, macOS
+    /// stopped asking and README can say so. It adds a keychain item and
+    /// removes it: `cargo test macos_keychain -- --ignored`.
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore]
-    fn macos_keychain_key_reads_after_an_update() {
+    fn macos_keychain_asks_once_after_an_update() {
         use std::process::Command;
         use std::time::{Duration, Instant};
-        let ours = format!("site.tuken.desktop.test.{}", uuid::Uuid::new_v4());
-        let plain = format!("site.tuken.desktop.test.{}", uuid::Uuid::new_v4());
-        let bare = format!("site.tuken.desktop.test.{}", uuid::Uuid::new_v4());
-        let key = keychain::key(&ours).unwrap();
-        security_framework::passwords::set_generic_password(&plain, keychain::ACCOUNT, &key)
-            .unwrap();
-        println!("bare add: {}", unsafe {
-            keychain::add_without_partitions(&bare, &key)
-        });
-        // What the keychain keeps about each item (access lists, no secrets).
-        let dump = Command::new("/usr/bin/security")
-            .args(["dump-keychain", "-a"])
-            .output()
-            .unwrap();
-        let dump = String::from_utf8_lossy(&dump.stdout);
-        for (what, service) in [("ours", &ours), ("default", &plain), ("bare", &bare)] {
-            for block in dump
-                .split("keychain: ")
-                .filter(|b| b.contains(service.as_str()))
-            {
-                println!(
-                    "==== {what} ====
-{block}"
-                );
-            }
-        }
-
+        let service = format!("site.tuken.desktop.test.{}", uuid::Uuid::new_v4());
+        keychain::key(&service).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let update = dir.path().join("update");
         std::fs::copy(std::env::current_exe().unwrap(), &update).unwrap();
@@ -791,37 +674,26 @@ mod tests {
             .status()
             .unwrap();
         assert!(signed.success());
-        // True when the copy read the item without anyone being asked.
-        let reads = |service: &str| {
-            let mut child = Command::new(&update)
-                .args(["--exact", "vault::tests::macos_keychain_read", "--ignored"])
-                .env("TUKEN_KEYCHAIN_READ", service)
-                .spawn()
-                .unwrap();
-            let started = Instant::now();
-            loop {
-                if let Some(status) = child.try_wait().unwrap() {
-                    return status.success();
-                }
-                if started.elapsed() > Duration::from_secs(60) {
-                    let _ = child.kill();
-                    return false;
-                }
-                std::thread::sleep(Duration::from_millis(200));
+        let mut child = Command::new(&update)
+            .args(["--exact", "vault::tests::macos_keychain_read", "--ignored"])
+            .env("TUKEN_KEYCHAIN_READ", &service)
+            .spawn()
+            .unwrap();
+        let started = Instant::now();
+        let read = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status.success();
             }
+            if started.elapsed() > Duration::from_secs(60) {
+                let _ = child.kill();
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(200));
         };
-        let (ours_read, plain_read, bare_read) = (reads(&ours), reads(&plain), reads(&bare));
-        println!("read by a new build: ours {ours_read}, default {plain_read}, bare {bare_read}");
-        keychain::forget(&ours);
-        keychain::forget(&bare);
-        let _ = security_framework::passwords::delete_generic_password(&plain, keychain::ACCOUNT);
+        keychain::forget(&service);
         assert!(
-            !plain_read,
-            "a new build read an item with the default access; the check means nothing here"
-        );
-        assert!(
-            ours_read,
-            "a new build of 兔啃 couldn't read the vault key unasked"
+            !read,
+            "a new build read the key unasked; README can drop its note"
         );
     }
 

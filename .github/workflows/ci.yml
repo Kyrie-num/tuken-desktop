@@ -38,8 +38,8 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test
 
-  # The same checks on a Mac, and the vault's keychain key read by a copy
-  # signed anew, as an update of 兔啃 is. (Claude Desktop itself: e2e.yml.)
+  # The same checks on a Mac, and whether a copy signed anew (as an update
+  # of 兔啃 is) gets the vault key unasked. (Claude Desktop itself: e2e.yml.)
   check-macos:
     runs-on: macos-latest
     steps:
@@ -64,7 +64,7 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
           cargo test
-      - name: The vault key after an update
+      - name: The keychain after an update
         working-directory: src-tauri
         run: cargo test macos_keychain -- --ignored --nocapture
 

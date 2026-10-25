@@ -38,8 +38,8 @@ dirs = "5.0"
 tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# The vault's key in the login keychain (with its access list), sealed with
-# AES-256-GCM. Tauri and rustls already build all of these for macOS.
+# The vault's key in the login keychain (added, never replaced), sealing it
+# with AES-256-GCM. Tauri and rustls already build all of these for macOS.
 security-framework = "3"
 security-framework-sys = "2"
 core-foundation = "0.10"
