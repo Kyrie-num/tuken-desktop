@@ -2,7 +2,7 @@ name: 检查
 
 on:
   push:
-    branches: [main, macos]
+    branches: [main]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -74,7 +74,7 @@ jobs:
   dmg:
     if: >-
       github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/macos'
+      startsWith(github.ref, 'refs/tags/')
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

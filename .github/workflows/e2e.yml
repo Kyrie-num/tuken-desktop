@@ -9,7 +9,7 @@ on:
   schedule:
     - cron: "23 2 * * 1"
   push:
-    branches: [main, macos]
+    branches: [main]
     paths:
       - src-tauri/src/desktop*.rs
       - src-tauri/src/claude_config.rs
