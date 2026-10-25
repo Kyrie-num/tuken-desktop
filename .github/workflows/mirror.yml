@@ -1,0 +1,82 @@
+name: 同步到下载站
+
+# Once a release is published, copies its files to the Cloudflare R2 bucket
+# behind download.tuken.site, then points the site's latest.json at them:
+# the update feed of 0.2.0 and later, install.ps1 and the website's download
+# buttons all read it. Run it by hand to sync a release again.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 版本标签，如 v0.2.0
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: download-site
+
+jobs:
+  mirror:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      # R2 doesn't take the checksum headers newer AWS CLIs add by default.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      R2: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+    steps:
+      # The scripts as they are now, also when an older release is synced.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Download the release
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unexpected tag: $TAG"; exit 1; }
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist
+          python3 .github/scripts/download_site_latest.py dist "$TAG" > site-latest.json
+          cat site-latest.json
+      - name: Upload the files, then the feed
+        run: |
+          put() {
+            aws s3 cp "$1" "s3://tuken-downloads/$2" --endpoint-url "$R2" --only-show-errors \
+              --content-type "$3" --cache-control "$4"
+          }
+          kept="public, max-age=31536000, immutable"
+          fresh="no-cache, max-age=0, must-revalidate"
+          for f in dist/*; do
+            name=$(basename "$f")
+            case "$name" in
+              latest.json) continue ;;
+              *.sig) type="text/plain; charset=utf-8" ;;
+              *.dmg) type=application/x-apple-diskimage ;;
+              *.tar.gz) type=application/gzip ;;
+              *) type=application/octet-stream ;;
+            esac
+            put "$f" "releases/$TAG/$name" "$type" "$kept"
+          done
+          put install.ps1 install.ps1 "text/plain; charset=utf-8" "$fresh"
+          # Last, so nothing points at the new version before its files are there.
+          put site-latest.json latest.json "application/json; charset=utf-8" "$fresh"
+      - name: Check the site
+        run: |
+          curl -fsS https://download.tuken.site/latest.json -o served.json
+          python3 -c '
+          import json, os
+          d = json.load(open("served.json", encoding="utf-8"))
+          assert d["version"] == os.environ["TAG"][1:], d["version"]
+          for f in [*d["platforms"].values(), *d["downloads"].values()]:
+              print(f["url"], f["size"])
+          ' | sort -u | while read -r url size; do
+            got=$(curl -fsSI "$url" | tr -d '\r' | awk 'tolower($1) == "content-length:" { print $2 }')
+            [ "$got" = "$size" ] || { echo "$url: $got bytes, expected $size"; exit 1; }
+            echo "ok $url"
+          done
