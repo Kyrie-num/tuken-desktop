@@ -280,6 +280,52 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Where the traffic lights go to sit centred in the 64 pt toolbar. Tauri
+/// keeps AppKit's own offset of the buttons, which macOS 26 changed: on
+/// GitHub's Macs, y 29.5 centres them on macOS 14 and 15, and macOS 26 draws
+/// them 4.5 pt higher.
+#[cfg(any(target_os = "macos", test))]
+fn traffic_light_y(product_version: &str) -> f64 {
+    let major = product_version
+        .split('.')
+        .next()
+        .and_then(|m| m.parse::<u32>().ok())
+        .unwrap_or(0);
+    if major >= 26 {
+        34.0
+    } else {
+        29.5
+    }
+}
+
+/// macOS builds the main window here (`create: false` in
+/// tauri.macos.conf.json): Tauri reads the traffic lights' place only when
+/// it builds a window, and the right place depends on the macOS version.
+#[cfg(target_os = "macos")]
+fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .cloned()
+        .ok_or("找不到主窗口的设置")?;
+    let version = plist::Value::from_file("/System/Library/CoreServices/SystemVersion.plist")
+        .ok()
+        .and_then(|v| {
+            v.as_dictionary()?
+                .get("ProductVersion")?
+                .as_string()
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+        .traffic_light_position(tauri::LogicalPosition::new(20.0, traffic_light_y(&version)))
+        .build()?;
+    Ok(())
+}
+
 /// The macOS menu bar, in Chinese like the rest of 兔啃: it also gives text
 /// fields their ⌘C, ⌘V, ⌘X, ⌘A and ⌘Z, and ⌘Q quits.
 #[cfg(target_os = "macos")]
@@ -376,6 +422,8 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|_| "找不到应用数据目录")?;
             app.manage(State::new(dir, app.config().identifier.clone()));
+            #[cfg(target_os = "macos")]
+            create_main_window(app)?;
             let used = apply_backdrop(app.handle(), None, false);
             *app.state::<State>().backdrop.lock().unwrap() = used;
             create_tray(app)?;
@@ -421,4 +469,16 @@ pub fn run() {
             }
             let _ = (app, event);
         });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn traffic_lights_sit_centred_on_each_macos() {
+        assert_eq!(super::traffic_light_y("14.7.6"), 29.5);
+        assert_eq!(super::traffic_light_y("15.7.1"), 29.5);
+        assert_eq!(super::traffic_light_y("26.6.2"), 34.0);
+        assert_eq!(super::traffic_light_y("27.0"), 34.0);
+        assert_eq!(super::traffic_light_y(""), 29.5);
+    }
 }

@@ -536,13 +536,26 @@ mod tests {
         );
         let meta = std::fs::read_to_string(threep.join("configLibrary/_meta.json")).unwrap();
         assert!(meta.contains(claude_config::PROFILE_ID), "{meta}");
-        if let Ok(log) = std::fs::read_to_string(home.join("Library/Logs/Claude-3p/main.log")) {
-            let lines: Vec<&str> = log.lines().collect();
-            println!(
-                "main.log:\n{}",
-                lines[lines.len().saturating_sub(40)..].join("\n")
-            );
-        }
+        // Its log is in Logs/Claude-3p too; what it says of the profile.
+        let log = std::fs::read_to_string(home.join("Library/Logs/Claude-3p/main.log"))
+            .expect("Claude Desktop logs as a third-party install");
+        let about: Vec<&str> = log
+            .lines()
+            .filter(|l| {
+                let l = l.to_lowercase();
+                [
+                    "3p",
+                    "inference",
+                    "gateway",
+                    "configlibrary",
+                    "managed config",
+                ]
+                .iter()
+                .any(|w| l.contains(w))
+            })
+            .take(40)
+            .collect();
+        println!("main.log about the profile:\n{}", about.join("\n"));
 
         // Restarted the way 兔啃 does: asked to quit, it quits within the
         // 10 seconds, and opens again.
