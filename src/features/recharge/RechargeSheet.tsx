@@ -10,7 +10,6 @@ import { cn } from "@/lib/cn";
 import { cny, creditOf } from "@/lib/format";
 import { qk, refreshCredit, useCatalog, useQuote } from "@/lib/queries";
 import { useAction, useSession, useUi } from "@/app/context";
-import { PayQr } from "./PayQr";
 
 /** How often an open payment asks whether it has been paid. */
 const POLL_MS = 3000;
@@ -25,8 +24,9 @@ const statusText: Record<string, string> = {
 };
 
 /**
- * Buy credit without leaving the app: pick an amount, scan the app's own QR
- * code with Alipay on the phone, and the credit lands by itself.
+ * Buy credit without leaving the app: pick an amount, scan the code in
+ * Alipay's own cashier window with the phone (小荷包 included), and the
+ * credit lands by itself.
  */
 export function RechargeSheet() {
   const client = useQueryClient();
@@ -73,8 +73,7 @@ export function RechargeSheet() {
           toast.error(o.message, { duration: 8000 });
           void refreshState();
         } else {
-          // Polls answer without the QR code; the one on screen stays.
-          setPaying((p) => (p?.id === o.id ? { ...o, qr: p.qr } : o));
+          setPaying(o);
         }
       } catch {
         /* Retried on the next tick; the native worker keeps checking too. */
@@ -87,6 +86,14 @@ export function RechargeSheet() {
       window.clearInterval(timer);
     };
   }, [rechargeOpen, payingId, client, uid]);
+
+  // Alipay's cashier opens in its own narrow window for the order on screen.
+  const openCashier = (id: string) =>
+    void tuken("order_cashier", { id }).catch((e) => toast.error(String(e)));
+  const cashierFor = paying?.status === "awaiting_payment" ? paying.id : null;
+  useEffect(() => {
+    if (cashierFor) openCashier(cashierFor);
+  }, [cashierFor]);
 
   const pay = () =>
     action.run(async () => {
@@ -156,49 +163,53 @@ export function RechargeSheet() {
           </button>
         </motion.div>
       ) : paying ? (
-        <div className="flex flex-col">
-          <div className="flex items-center gap-7 pt-1">
-            <PayQr order={paying} />
-            <div className="min-w-0 flex-1">
-              <p className="font-display text-[34px] font-semibold leading-none tnum">
-                {cny(paying.amount)}
-              </p>
-              <p className="mt-2 text-body text-ink/60">
-                {creditOf(paying.name) !== null
-                  ? `$${creditOf(paying.name)} 额度`
-                  : paying.name}
-              </p>
-              <p className="mt-6 text-body text-ink/80">
-                {paying.status === "awaiting_payment"
-                  ? "打开手机支付宝扫一扫，付完额度自动到账"
-                  : "付款已收到，额度马上到账"}
-              </p>
-              <p
-                role="status"
-                className="mt-3 flex items-center gap-2 text-small text-ink/60"
+        <div className="flex flex-col items-center py-4 text-center">
+          <p className="font-display text-[34px] font-semibold leading-none tnum">
+            {cny(paying.amount)}
+          </p>
+          <p className="mt-2 text-body text-ink/60">
+            {creditOf(paying.name) !== null
+              ? `$${creditOf(paying.name)} 额度`
+              : paying.name}
+          </p>
+          <p className="mt-6 max-w-[380px] text-body text-ink/80">
+            {paying.status === "awaiting_payment"
+              ? "已打开支付宝付款窗口，用手机支付宝扫码，可以用小荷包付款。付完额度自动到账。"
+              : "付款已收到，额度马上到账"}
+          </p>
+          <p
+            role="status"
+            className="mt-3 flex items-center gap-2 text-small text-ink/60"
+          >
+            {paying.status === "awaiting_payment" ? (
+              <span className="relative flex h-2 w-2" aria-hidden="true">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange/60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-orange" />
+              </span>
+            ) : (
+              <Loader2 size={14} className="animate-spin text-cyan-ink" />
+            )}
+            {statusText[paying.status] ?? paying.message}
+          </p>
+          {paying.status === "awaiting_payment" && (
+            <div className="mt-6 flex items-center gap-2">
+              <button
+                type="button"
+                className="btn btn-glass"
+                onClick={() => openCashier(paying.id)}
               >
-                {paying.status === "awaiting_payment" ? (
-                  <span className="relative flex h-2 w-2" aria-hidden="true">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange/60" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-orange" />
-                  </span>
-                ) : (
-                  <Loader2 size={14} className="animate-spin text-cyan-ink" />
-                )}
-                {statusText[paying.status] ?? paying.message}
-              </p>
-              {paying.status === "awaiting_payment" && (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm -ml-3 mt-4 text-ink/55"
-                  disabled={action.busy}
-                  onClick={() => void cancel(paying)}
-                >
-                  不买了
-                </button>
-              )}
+                重新打开付款窗口
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost text-ink/55"
+                disabled={action.busy}
+                onClick={() => void cancel(paying)}
+              >
+                不买了
+              </button>
             </div>
-          </div>
+          )}
         </div>
       ) : (
         <>

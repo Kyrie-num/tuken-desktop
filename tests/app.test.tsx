@@ -1,9 +1,14 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "sonner";
+import { toast, Toaster } from "sonner";
 import { App } from "@/app/App";
-import { LoginProvider, TOUR_DONE, UiProvider } from "@/app/context";
+import {
+  LoginProvider,
+  SETUP_DONE,
+  TOUR_DONE,
+  UiProvider,
+} from "@/app/context";
 import {
   createMock,
   installMock,
@@ -12,6 +17,7 @@ import {
   MOCK_TOTP,
   type Scenario,
 } from "@/dev/mock";
+import { rewardsSeen } from "@/features/rewards/RewardNotice";
 import { persistCache, restoreCache } from "@/lib/persist";
 import { qk, queryClient } from "@/lib/queries";
 
@@ -39,9 +45,15 @@ const calls = (invoke: Invoke, action: string) =>
 
 beforeEach(() => {
   queryClient.clear();
+  // Toasts outlive a test in sonner's own store; the next one starts clean.
+  toast.dismiss();
   localStorage.clear();
-  // The first-run guide has its own test.
+  // The first-run guide and the setup have their own tests.
   localStorage.setItem(TOUR_DONE, "done");
+  localStorage.setItem(SETUP_DONE, "done");
+  // Rewards on record have been shown already; their popup has its tests.
+  localStorage.setItem(rewardsSeen(1), "999");
+  localStorage.setItem(rewardsSeen(2), "999");
 });
 
 describe("兔啃", () => {
@@ -216,6 +228,140 @@ describe("兔啃", () => {
     expect(
       await screen.findByText("$28.50", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
+  });
+
+  it("sets up a new computer before the home page", async () => {
+    localStorage.removeItem(SETUP_DONE);
+    const user = userEvent.setup();
+    const invoke = show("in", { noDesktop: true });
+    // No pages to wander off to until it is done.
+    expect(
+      await screen.findByRole("heading", { name: "先装好 Claude Desktop" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "账单" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "一键安装" }));
+    expect(
+      await screen.findByRole("heading", { name: "一键配置 Claude Desktop" }),
+    ).toBeInTheDocument();
+    // The newest Opus and the highest effort are chosen; both can change.
+    const model = await screen.findByRole("combobox", { name: "默认模型" });
+    expect(model).toHaveValue("claude-opus-5-5");
+    expect(screen.getByRole("tab", { name: "最高" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.click(screen.getByRole("button", { name: "一键配置" }));
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: "全部准备好了" },
+        { timeout: 3000 },
+      ),
+    ).toBeInTheDocument();
+    // The newest Opus first, at the highest effort.
+    const set = invoke.mock.calls.find(([cmd]) => cmd === "desktop_models");
+    expect(set?.[1]).toMatchObject({ effort: "max" });
+    expect(set?.[1].models[0]).toBe("claude-opus-5-5");
+    // The account's own Claude key is used; no second one is made.
+    expect(calls(invoke, "key_create")).toHaveLength(0);
+    expect(calls(invoke, "connect")[0]).toMatchObject({
+      app: "desktop",
+      id: expect.any(Number),
+    });
+    await user.click(
+      screen.getByRole("button", { name: "打开 Claude Desktop" }),
+    );
+    expect(await screen.findByText("$28.50")).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "desktop_open")).toBe(
+      true,
+    );
+    expect(localStorage.getItem(SETUP_DONE)).toBe("done");
+  });
+
+  it("lets the setup use another model and effort", async () => {
+    localStorage.removeItem(SETUP_DONE);
+    const user = userEvent.setup();
+    const invoke = show("in");
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "默认模型" }),
+      "claude-sonnet-4-5",
+    );
+    await user.click(screen.getByRole("tab", { name: "高" }));
+    await user.click(screen.getByRole("button", { name: "一键配置" }));
+    expect(
+      await screen.findByRole("heading", { name: "全部准备好了" }),
+    ).toBeInTheDocument();
+    const set = invoke.mock.calls.find(([cmd]) => cmd === "desktop_models");
+    expect(set?.[1]).toMatchObject({ effort: "high" });
+    expect(set?.[1].models[0]).toBe("claude-sonnet-4-5");
+    expect(
+      screen.getByText(/默认用 Sonnet 4\.5，推理程度高/),
+    ).toBeInTheDocument();
+  });
+
+  it("asks for credit first when the account has none", async () => {
+    localStorage.removeItem(SETUP_DONE);
+    const user = userEvent.setup();
+    show("in", { noCredit: true });
+    expect(
+      await screen.findByRole("heading", { name: "先领一点额度" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "签到领额度" }));
+    const sheet = await screen.findByRole("dialog", { name: "每日签到" });
+    await user.click(
+      within(sheet).getByRole("button", { name: "签到领 $0.10" }),
+    );
+    await user.keyboard("{Escape}");
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: "一键配置 Claude Desktop" },
+        { timeout: 6000 },
+      ),
+    ).toBeInTheDocument();
+  }, 15_000);
+
+  it("skips the setup where Claude Desktop already runs on 兔啃", async () => {
+    localStorage.removeItem(SETUP_DONE);
+    show("ok");
+    expect(await screen.findByText("$28.50")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "激活步骤" })).toBeNull();
+    await waitFor(() => expect(localStorage.getItem(SETUP_DONE)).toBe("done"));
+  });
+
+  it("welcomes a new account with its sign-up bonus", async () => {
+    localStorage.removeItem(rewardsSeen(1));
+    const user = userEvent.setup();
+    show("in");
+    const sheet = await screen.findByRole("dialog", {
+      name: "注册成功，送你额度",
+    });
+    // The bonus and the invite reward of the last day, together.
+    expect(within(sheet).getByText("+$52.00")).toBeInTheDocument();
+    expect(
+      within(sheet).getByText("新用户注册奖励已到账，可以直接用。"),
+    ).toBeInTheDocument();
+    await user.click(within(sheet).getByRole("button", { name: "好的" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(localStorage.getItem(rewardsSeen(1))).toBe("6");
+  });
+
+  it("pops up an invite reward that comes in while 兔啃 is open", async () => {
+    localStorage.setItem(rewardsSeen(1), "6");
+    const user = userEvent.setup();
+    const invoke = show("in");
+    await screen.findByText("$28.50");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // A friend signs up with the code; the user comes back to the window.
+    await invoke("mock:invite");
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    const sheet = await screen.findByRole("dialog", { name: "邀请奖励到账" });
+    expect(within(sheet).getByText("+$2.00")).toBeInTheDocument();
+    expect(
+      within(sheet).getByText(/有好友用你的邀请码注册了/),
+    ).toBeInTheDocument();
+    await user.click(within(sheet).getByRole("button", { name: "好的" }));
   });
 
   it("guides a new user once, and again from the account menu", async () => {
@@ -445,12 +591,13 @@ describe("兔啃", () => {
     });
   });
 
-  it("invites friends from the account menu", async () => {
+  it("invites friends from beside the balance", async () => {
     const user = userEvent.setup();
     show("in");
     await screen.findByText("$28.50");
-    await user.click(screen.getByRole("button", { name: "账户" }));
-    await user.click(await screen.findByRole("menuitem", { name: /邀请好友/ }));
+    await user.click(
+      await screen.findByRole("button", { name: "邀请好友 得 $2.00" }),
+    );
     const sheet = await screen.findByRole("dialog", { name: "邀请好友" });
     expect(within(sheet).getByText("XM2026")).toBeInTheDocument();
     expect(within(sheet).getByText(/你得 \$2\.00/)).toBeInTheDocument();
@@ -570,14 +717,11 @@ describe("兔啃", () => {
         confirmed_amount: 10.18,
       }),
     );
-    // The app's own QR code, no web page.
-    expect(
-      await screen.findByRole("img", { name: "支付宝付款二维码" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("打开手机支付宝扫一扫，付完额度自动到账"),
-    ).toBeInTheDocument();
-    expect(invoke.mock.calls.some(([cmd]) => cmd === "panel_show")).toBe(false);
+    // Alipay's own cashier opens in its own window, for 小荷包.
+    expect(await screen.findByText(/已打开支付宝付款窗口/)).toBeInTheDocument();
+    await waitFor(() => expect(calls(invoke, "order_cashier")).toHaveLength(1));
+    await user.click(screen.getByRole("button", { name: "重新打开付款窗口" }));
+    expect(calls(invoke, "order_cashier")).toHaveLength(2);
     expect(
       await screen.findByText(
         "付款已收到，额度马上到账",

@@ -1,6 +1,6 @@
 [package]
 name = "tuken"
-version = "0.1.0"
+version = "0.2.0"
 description = "兔啃桌面客户端"
 edition = "2021"
 rust-version = "1.85"
@@ -31,7 +31,6 @@ chrono = "0.4"
 url = "2.5"
 base64 = "0.22"
 sha2 = "0.10"
-qrcodegen = "1.8"
 uuid = { version = "1.11", features = ["v4"] }
 dirs = "5.0"
 tempfile = "3"

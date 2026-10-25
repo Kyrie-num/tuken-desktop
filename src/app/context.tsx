@@ -62,6 +62,13 @@ type Ui = {
   setCheckinOpen: (open: boolean) => void;
   inviteOpen: boolean;
   setInviteOpen: (open: boolean) => void;
+  /**
+   * The first-run setup on this computer: still to decide, on show (until
+   * finished, even once Claude Desktop is configured), or done.
+   */
+  setup: "unknown" | "show" | "done";
+  beginSetup: () => void;
+  finishSetup: () => void;
   /** The step of the first-run guide on show, if any. */
   tour: number | null;
   startTour: () => void;
@@ -73,6 +80,8 @@ const UiContext = createContext<Ui | null>(null);
 
 /** Set once the guide has been seen or skipped on this computer. */
 export const TOUR_DONE = "tuken-tour";
+/** Set once this computer's setup is finished (or was never needed). */
+export const SETUP_DONE = "tuken-setup";
 export const tourDone = () => localStorage.getItem(TOUR_DONE) === "done";
 
 export function UiProvider({ children }: { children: ReactNode }) {
@@ -91,6 +100,15 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [checkinOpen, setCheckinOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [tour, setTour] = useState<number | null>(null);
+  const [setup, setSetup] = useState<Ui["setup"]>(() =>
+    localStorage.getItem(SETUP_DONE) === "done" ? "done" : "unknown",
+  );
+  const beginSetup = useCallback(() => setSetup("show"), []);
+  const finishSetup = useCallback(() => {
+    localStorage.setItem(SETUP_DONE, "done");
+    setSetup("done");
+    go("home");
+  }, []);
   const { uid } = useSession();
   // Another account starts on its home page.
   useEffect(() => go("home"), [uid]);
@@ -124,6 +142,9 @@ export function UiProvider({ children }: { children: ReactNode }) {
       setCheckinOpen,
       inviteOpen,
       setInviteOpen,
+      setup,
+      beginSetup,
+      finishSetup,
       tour,
       startTour,
       moveTour: setTour,
@@ -139,12 +160,33 @@ export function UiProvider({ children }: { children: ReactNode }) {
       noticesOpen,
       checkinOpen,
       inviteOpen,
+      setup,
+      beginSetup,
+      finishSetup,
       tour,
       startTour,
       endTour,
     ],
   );
   return <UiContext.Provider value={value}>{children}</UiContext.Provider>;
+}
+
+/**
+ * Whether the first-run setup shows: on a computer where Claude Desktop isn't
+ * yet installed and configured for 兔啃. Decided once per computer, from the
+ * live status, and kept while it runs.
+ */
+export function useSetup() {
+  const { uid } = useSession();
+  const { setup, beginSetup, finishSetup } = useUi();
+  const { data: status } = useDesktop();
+  useEffect(() => {
+    if (setup !== "unknown" || !uid || !status) return;
+    const ready = status.connected && !!status.models?.models.length;
+    if (status.supported && !ready) beginSetup();
+    else finishSetup();
+  }, [setup, uid, status, beginSetup, finishSetup]);
+  return setup;
 }
 
 export function useUi() {

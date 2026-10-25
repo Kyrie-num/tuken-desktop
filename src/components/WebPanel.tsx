@@ -6,8 +6,8 @@ import { cn } from "@/lib/cn";
 const SETTLE_MS = 340;
 
 /**
- * Keeps a box free for the in-app web page (the site's sign-in, or Alipay's
- * cashier). The page is a native view laid over this box, so the box only
+ * Keeps a box free for the in-app web page (the site's sign-in). The page
+ * is a native view laid over this box, so the box only
  * reports where it is; what loads is decided natively. `children` show until
  * the page covers them, and in previews and tests, where there is none.
  */

@@ -13,8 +13,6 @@ export type Order = {
   status: string;
   created_at: number;
   message: string;
-  /** While paying: the payment link's QR modules, for an SVG path. */
-  qr?: { size: number; path: string };
 };
 export type AppState = {
   active: number | null;

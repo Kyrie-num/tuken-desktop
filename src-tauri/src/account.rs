@@ -423,7 +423,11 @@ async fn login_start(app: &AppHandle, state: &State, input: &Value) -> Result<Va
     crate::panel::set(
         app,
         crate::panel::Target {
-            register: input["register"] == true,
+            kind: if input["register"] == true {
+                crate::panel::Kind::SignUp
+            } else {
+                crate::panel::Kind::SignIn
+            },
             url,
         },
     );
@@ -727,8 +731,10 @@ pub async fn tuken(
             state.save(&v)?;
             Ok(v.view())
         }
-        "catalog" | "quote" | "order_create" | "order_pay" | "order_poll" | "order_close"
-        | "order_recovery" | "sync" => crate::shop::action(&app, state, &action, &input).await,
+        "catalog" | "quote" | "order_create" | "order_pay" | "order_cashier" | "order_poll"
+        | "order_close" | "order_recovery" | "sync" => {
+            crate::shop::action(&app, state, &action, &input).await
+        }
         "site" => site().await,
         "update_check" => crate::update::check(&app).await,
         "update_install" => crate::update::install(&app).await,

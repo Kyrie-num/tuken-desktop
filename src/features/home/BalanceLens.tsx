@@ -1,8 +1,15 @@
-import { CalendarCheck, Gift, ReceiptText, Wallet } from "lucide-react";
+import {
+  CalendarCheck,
+  Gift,
+  ReceiptText,
+  UserPlus,
+  Wallet,
+} from "lucide-react";
 import {
   useAppState,
   useCheckin,
   useDashboard,
+  useInvite,
   useProfile,
 } from "@/lib/queries";
 import { usd } from "@/lib/format";
@@ -15,7 +22,7 @@ import { useSession, useUi } from "@/app/context";
  */
 export function BalanceLens() {
   const { uid, account } = useSession();
-  const { go, setRechargeOpen, setCheckinOpen } = useUi();
+  const { go, setRechargeOpen, setCheckinOpen, setInviteOpen } = useUi();
   const profile = useProfile(uid);
   const dashboard = useDashboard(uid);
   const { data: state } = useAppState();
@@ -31,6 +38,9 @@ export function BalanceLens() {
     c && c.reward_min !== null && c.reward_min === c.reward_max
       ? `+${usd(c.reward_min)}`
       : "领额度";
+  const invite = useInvite(uid);
+  const inviting =
+    invite.data?.supported && invite.data.enabled ? invite.data : null;
 
   return (
     <div className="relative isolate h-full">
@@ -50,6 +60,16 @@ export function BalanceLens() {
           size={150}
           className="pointer-events-none absolute -bottom-10 right-5 opacity-95"
         />
+        {inviting && (
+          <button
+            type="button"
+            className="btn btn-glass btn-sm absolute right-6 top-6"
+            onClick={() => setInviteOpen(true)}
+          >
+            <UserPlus size={14} />
+            邀请好友{inviting.reward ? ` 得 ${usd(inviting.reward)}` : ""}
+          </button>
+        )}
         <div className="relative max-w-[70%]">
           <p className="truncate text-small text-ink/60">
             {profile.data?.email ?? account?.email}

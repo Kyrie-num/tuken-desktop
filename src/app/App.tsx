@@ -24,8 +24,10 @@ import { NoticesSheet } from "@/features/notice/Notices";
 import { LoginSheet } from "@/features/LoginSheet";
 import { LoginBanner, Welcome } from "@/features/Welcome";
 import { Tour } from "@/features/tour/Tour";
+import { Setup } from "@/features/setup/Setup";
+import { RewardNotice } from "@/features/rewards/RewardNotice";
 import { Toolbar } from "./Toolbar";
-import { tourDone, useSession, useUi } from "./context";
+import { tourDone, useSession, useSetup, useUi } from "./context";
 
 const pages = { home: Home, bills: Bills, models: Models, profile: Profile };
 
@@ -33,6 +35,7 @@ export function App() {
   const client = useQueryClient();
   const { uid, loading } = useSession();
   const { page, rechargeOpen, startTour } = useUi();
+  const setup = useSetup();
 
   // The native worker can finish a payment while the recharge sheet is closed.
   useEffect(() => {
@@ -46,15 +49,15 @@ export function App() {
     return () => stop?.();
   }, [client, uid, rechargeOpen]);
 
-  // The guide shows itself once, after the first sign-in on this computer,
-  // unless something else is already open by then.
+  // The guide shows itself once, after the setup on this computer, unless
+  // something else is already open by then.
   useEffect(() => {
-    if (!uid || tourDone()) return;
+    if (!uid || tourDone() || setup !== "done") return;
     const t = window.setTimeout(() => {
       if (!document.querySelector('[role="dialog"]')) startTour();
     }, 900);
     return () => window.clearTimeout(t);
-  }, [uid, startTour]);
+  }, [uid, startTour, setup]);
 
   const Page = pages[page];
   return (
@@ -64,6 +67,8 @@ export function App() {
       <main className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto">
         {loading ? null : !uid ? (
           <Welcome />
+        ) : setup === "unknown" ? null : setup === "show" ? (
+          <Setup />
         ) : (
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
@@ -96,6 +101,7 @@ export function App() {
           <AuthSheet />
           <NoticesSheet />
           <InviteSheet />
+          <RewardNotice />
           <LoginBanner />
           <Tour />
         </>

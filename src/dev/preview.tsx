@@ -1,7 +1,9 @@
 /**
  * Design preview on mock data: /preview.html?s=out | in | ok (signed out,
  * signed in, Claude Desktop connected); &auth=site for a server without the
- * desktop sign-in API; &paid=never to keep an order waiting for payment.
+ * desktop sign-in API; &paid=never to keep an order waiting for payment;
+ * &desktop=none for a computer without Claude Desktop, &credit=none for an
+ * account without credit (the setup shows until it is finished once).
  * The body stands in for the desktop wallpaper that Windows 11 Mica shows
  * through the window.
  */
@@ -13,6 +15,8 @@ installMock(
   createMock(scenario, {
     nativeAuth: params.get("auth") !== "site",
     paidAfter: params.get("paid") === "never" ? Infinity : 2,
+    noDesktop: params.get("desktop") === "none",
+    noCredit: params.get("credit") === "none",
   }),
 );
 

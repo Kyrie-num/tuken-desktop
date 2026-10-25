@@ -15,7 +15,7 @@ const PAGES = [
 /** The floating title bar: brand, page capsule, account and window buttons. */
 export function Toolbar() {
   const { uid } = useSession();
-  const { page, go } = useUi();
+  const { page, go, setup } = useUi();
   return (
     <header
       data-tauri-drag-region
@@ -36,7 +36,7 @@ export function Toolbar() {
         />
       </div>
       <div data-tauri-drag-region className="flex justify-center">
-        {uid && (
+        {uid && setup === "done" && (
           <div data-tour="pages" className="rounded-full">
             <Segmented<Page>
               id="nav"

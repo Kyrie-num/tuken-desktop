@@ -1,8 +1,8 @@
 //! Buying credit from the catfk.com (云猫) shop without leaving the app. The
-//! catalog and price come from the shop's API; the app shows the order's
-//! payment link as its own QR code, which the phone's Alipay opens in its
-//! mobile cashier; and the redemption code the shop delivers is redeemed to
-//! the buyer's account by the native worker.
+//! catalog and price come from the shop's API; the order's payment link opens
+//! Alipay's own cashier in a narrow window, whose code the phone's Alipay
+//! pays (小荷包 included); and the redemption code the shop delivers is
+//! redeemed to the buyer's account by the native worker.
 
 use std::time::{Duration, Instant};
 
@@ -135,47 +135,20 @@ async fn quote(state: &State, goods_id: &str, channel: &Value, fresh: bool) -> R
     Ok(amount)
 }
 
-/// The payment link as a QR code for the phone's Alipay to scan: its dark
-/// modules as one SVG path, each run of a row one rectangle. The UI draws it
-/// on white with the quiet zone around it, so it is only ever an image.
-fn pay_qr(url: &str) -> Result<Value, String> {
-    use qrcodegen::{QrCode, QrCodeEcc};
-    // Long links keep the lowest error correction, so modules stay large.
-    let ecc = if url.len() <= 300 {
-        QrCodeEcc::Medium
-    } else {
-        QrCodeEcc::Low
-    };
-    let qr = QrCode::encode_text(url, ecc).map_err(|_| "付款链接太长，请在浏览器里付款")?;
-    let size = qr.size();
-    let mut path = String::new();
-    for y in 0..size {
-        let mut x = 0;
-        while x < size {
-            if !qr.get_module(x, y) {
-                x += 1;
-                continue;
-            }
-            let start = x;
-            while x < size && qr.get_module(x, y) {
-                x += 1;
-            }
-            path.push_str(&format!("M{start} {y}h{}v1H{start}z", x - start));
-        }
-    }
-    Ok(json!({ "size": size, "path": path }))
-}
-
-/// An order waiting for payment, as the paying screen shows it: with its QR.
-fn payable(o: &Order) -> Result<Value, String> {
-    let url = o
-        .pay_url
+/// The payment link of an order still waiting for payment.
+fn pay_link(o: &Order) -> Result<url::Url, String> {
+    o.pay_url
         .as_deref()
         .filter(|u| valid_pay_url(u))
-        .ok_or("这笔订单没有付款链接")?;
-    let mut v = o.public();
-    v["qr"] = pay_qr(url)?;
-    Ok(v)
+        .and_then(|u| url::Url::parse(u).ok())
+        .ok_or_else(|| "这笔订单没有付款链接".to_string())
+}
+
+/// An order waiting for payment, as the paying screen shows it. The link
+/// itself stays here: `order_cashier` opens it in the cashier window.
+fn payable(o: &Order) -> Result<Value, String> {
+    pay_link(o)?;
+    Ok(o.public())
 }
 
 // Require all identifiers, payment status, quantity and fulfillment to agree.
@@ -314,6 +287,7 @@ pub async fn sync(app: &AppHandle, state: &State) -> Result<(), String> {
         // Tells the UI to refresh the balance, also when it didn't start the sync.
         let _ = app.emit("tuken://credited", ());
     }
+    crate::cashier::settle(app, &state.vault().await?.orders);
     Ok(())
 }
 
@@ -477,6 +451,21 @@ pub async fn action(
             }
             payable(&o)
         }
+        "order_cashier" => {
+            // Alipay's own cashier in a window of its own: the code it
+            // shows, scanned with the phone, also offers 小荷包.
+            let account = state.current().await?;
+            let o = order_of(
+                &*state.vault().await?,
+                str_field(input, "id")?,
+                account.user_id,
+            )?;
+            if o.status != "awaiting_payment" {
+                return Err("这笔订单已经不能付款了".into());
+            }
+            crate::cashier::open(app, &o.id, pay_link(&o)?)?;
+            Ok(json!({}))
+        }
         "order_poll" => {
             // Called every few seconds while a payment is in progress, so the
             // credit lands right after paying instead of on the worker's next pass.
@@ -514,6 +503,7 @@ pub async fn action(
                     x.pay_url = None;
                 })
                 .await?;
+            crate::cashier::settle(app, &state.vault().await?.orders);
             Ok(o.public())
         }
         "order_recovery" => {
@@ -601,22 +591,18 @@ mod tests {
     }
 
     #[test]
-    fn payment_qr_is_only_rectangles() {
-        let qr = pay_qr("https://catfk.com/pay/example").unwrap();
-        let size = qr["size"].as_i64().unwrap();
-        assert!((21..=177).contains(&size));
-        let path = qr["path"].as_str().unwrap();
-        assert!(path.starts_with("M0 0h7v1H0z"), "finder pattern first");
-        assert!(path
-            .chars()
-            .all(|c| c.is_ascii_digit() || " MhvHz".contains(c)));
-        // Gateway links with signed parameters still fit.
-        assert!(pay_qr(&format!("https://pay.example/?{}", "a".repeat(1500))).is_ok());
-
+    fn the_paying_screen_gets_no_payment_link() {
         let mut o = order();
         assert!(payable(&o).is_err());
         o.pay_url = Some("https://catfk.com/pay/example".into());
-        assert_eq!(payable(&o).unwrap()["qr"], qr);
+        let v = payable(&o).unwrap();
+        assert!(!v.to_string().contains("catfk.com/pay"));
+        assert_eq!(
+            pay_link(&o).unwrap().as_str(),
+            "https://catfk.com/pay/example"
+        );
+        o.pay_url = Some("http://catfk.com/pay/example".into());
+        assert!(payable(&o).is_err());
     }
 
     #[test]

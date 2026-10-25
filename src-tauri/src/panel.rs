@@ -10,10 +10,16 @@ use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl};
 
 pub const LABEL: &str = "tuken-panel";
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    SignIn,
+    /// The site's sign-up form instead of sign-in.
+    SignUp,
+}
+
 #[derive(Clone)]
 pub struct Target {
-    /// Opens the site's sign-up form instead of sign-in.
-    pub register: bool,
+    pub kind: Kind,
     pub url: url::Url,
 }
 
@@ -50,7 +56,7 @@ fn target(app: &AppHandle) -> Option<Target> {
 }
 
 /// Sets what the panel shows next. An open panel follows to the new page,
-/// unless it switches between sign-in and sign-up: then it closes until the
+/// unless it switches to another kind of page: then it closes until the
 /// page shows it again.
 pub fn set(app: &AppHandle, next: Target) {
     let previous = app
@@ -60,7 +66,7 @@ pub fn set(app: &AppHandle, next: Target) {
         .unwrap()
         .replace(next.clone());
     if let Some(w) = app.get_webview(LABEL) {
-        if previous.is_some_and(|p| p.register == next.register) {
+        if previous.is_some_and(|p| p.kind == next.kind) {
             let _ = w.navigate(next.url);
         } else {
             let _ = w.close();
@@ -92,7 +98,7 @@ pub async fn panel_show(app: AppHandle, rect: Rect) -> Result<(), String> {
     }
     let window = app.get_window("main").ok_or("找不到主窗口")?;
     let switched = std::sync::atomic::AtomicBool::new(false);
-    let register = target.register;
+    let kind = target.kind;
     let builder = tauri::webview::WebviewBuilder::new(LABEL, WebviewUrl::External(target.url))
         .zoom_hotkeys_enabled(false)
         // A private profile per sign-in, so another account can sign in next.
@@ -100,7 +106,7 @@ pub async fn panel_show(app: AppHandle, rect: Rect) -> Result<(), String> {
         .initialization_script(LIGHT_SITE)
         .on_navigation(allowed)
         .on_page_load(move |webview, payload| {
-            if register
+            if kind == Kind::SignUp
                 && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
                 && !switched.swap(true, std::sync::atomic::Ordering::SeqCst)
             {
@@ -147,6 +153,7 @@ mod tests {
             "http://www.tuken.site/login",
             "https://tuken.site.evil.example/",
             "https://accounts.google.com/",
+            "https://excashier.alipay.com/standard/auth.htm",
         ] {
             assert!(!allowed(&url::Url::parse(bad).unwrap()), "{bad}");
         }

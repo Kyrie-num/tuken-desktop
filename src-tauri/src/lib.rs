@@ -3,6 +3,7 @@
 
 mod account;
 mod api;
+mod cashier;
 mod claude_config;
 mod desktop;
 mod google;
@@ -277,7 +278,8 @@ pub fn run() {
                 panel::panel_hide,
             ];
             move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
-                // The sign-in panel and the Google window show remote pages.
+                // The sign-in panel, the Google window and the payment
+                // window show remote pages.
                 // App commands aren't covered by window capabilities, so
                 // refuse them here.
                 if invoke.message.webview().label() != "main" {

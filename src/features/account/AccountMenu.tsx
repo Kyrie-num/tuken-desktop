@@ -4,7 +4,6 @@ import {
   ChevronDown,
   Compass,
   MessageCircle,
-  UserPlus,
   LogOut,
   Moon,
   Plus,
@@ -24,7 +23,7 @@ import {
 } from "@/components/Menu";
 import { tuken, type AppState } from "@/lib/api";
 import { initial } from "@/lib/format";
-import { prefetchAccount, qk, useInvite, useUpdate } from "@/lib/queries";
+import { prefetchAccount, qk, useUpdate } from "@/lib/queries";
 import { useTheme, type Theme } from "@/lib/theme";
 import { message, useLogin, useSession, useUi } from "@/app/context";
 import { installUpdate } from "@/features/update/Update";
@@ -45,9 +44,7 @@ export function Avatar({ text, size = 28 }: { text?: string; size?: number }) {
 export function AccountMenu() {
   const client = useQueryClient();
   const { account, accounts, uid } = useSession();
-  const { go, startTour, setContactOpen, setInviteOpen } = useUi();
-  const invite = useInvite(uid);
-  const inviting = invite.data?.supported && invite.data.enabled;
+  const { go, startTour, setContactOpen } = useUi();
   const login = useLogin();
   const update = useUpdate();
   const [theme, setTheme] = useTheme();
@@ -130,12 +127,6 @@ export function AccountMenu() {
           <Compass size={16} className="opacity-70" />
           新手指引
         </MenuItem>
-        {inviting && (
-          <MenuItem onSelect={() => setInviteOpen(true)}>
-            <UserPlus size={16} className="opacity-70" />
-            邀请好友
-          </MenuItem>
-        )}
         <MenuItem onSelect={() => setContactOpen(true)}>
           <MessageCircle size={16} className="opacity-70" />
           联系我们

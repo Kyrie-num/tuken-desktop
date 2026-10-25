@@ -210,14 +210,19 @@ fn to_browser(app: &AppHandle, start: &str, in_browser: &AtomicBool) -> Result<(
     Ok(())
 }
 
-/// Over the middle of the main window, in logical pixels.
-fn centered_over(main: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+/// Where a window of `width` × `height` sits over the middle of the main
+/// window, in logical pixels.
+pub(crate) fn centered_over(
+    main: &tauri::WebviewWindow,
+    width: f64,
+    height: f64,
+) -> Option<(f64, f64)> {
     let scale = main.scale_factor().ok()?;
     let pos = main.outer_position().ok()?.to_logical::<f64>(scale);
     let size = main.outer_size().ok()?.to_logical::<f64>(scale);
     Some((
-        pos.x + (size.width - WIDTH) / 2.0,
-        (pos.y + (size.height - HEIGHT) / 2.0).max(0.0),
+        pos.x + (size.width - width) / 2.0,
+        (pos.y + (size.height - height) / 2.0).max(0.0),
     ))
 }
 
@@ -245,7 +250,7 @@ fn open_window(app: &AppHandle, flow: &Flow, port: u16) -> Result<(), String> {
             allowed(u, port)
         });
     if let Some(main) = app.get_webview_window("main") {
-        if let Some((x, y)) = centered_over(&main) {
+        if let Some((x, y)) = centered_over(&main, WIDTH, HEIGHT) {
             builder = builder.position(x, y);
         }
         // Owned by the main window: stays above it, goes away with it.

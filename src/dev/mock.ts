@@ -5,51 +5,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export type Scenario = "out" | "in" | "ok";
 
-/** A QR-looking pattern for the preview, as the native side sends one; it encodes nothing. */
-function fakeQr(seed: string) {
-  const n = 33;
-  let h = 2166136261;
-  for (const c of seed) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0;
-  const finder = (x: number, y: number) => {
-    for (const [fx, fy] of [
-      [0, 0],
-      [n - 7, 0],
-      [0, n - 7],
-    ]) {
-      const dx = x - fx;
-      const dy = y - fy;
-      if (dx < -1 || dy < -1 || dx > 7 || dy > 7) continue;
-      if (dx < 0 || dy < 0 || dx > 6 || dy > 6) return false;
-      const ring = dx === 0 || dy === 0 || dx === 6 || dy === 6;
-      return ring || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
-    }
-    return null;
-  };
-  const grid = Array.from({ length: n }, (_, y) =>
-    Array.from({ length: n }, (_, x) => {
-      const f = finder(x, y);
-      if (f !== null) return f;
-      if (y === 6) return x % 2 === 0;
-      if (x === 6) return y % 2 === 0;
-      h = Math.imul(h ^ (x * 73 + y * 151), 16777619) >>> 0;
-      return (h >>> 7) % 2 === 0;
-    }),
-  );
-  let path = "";
-  for (let y = 0; y < n; y++) {
-    for (let x = 0; x < n;) {
-      if (!grid[y][x]) {
-        x++;
-        continue;
-      }
-      const start = x;
-      while (x < n && grid[y][x]) x++;
-      path += `M${start} ${y}h${x - start}v1H${start}z`;
-    }
-  }
-  return { size: n, path };
-}
-
 /** `YYYY-MM-DD` in Beijing, `n` days ago. */
 const beijingDay = (n: number) =>
   new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai" }).format(
@@ -81,6 +36,8 @@ export function createMock(
     update = "",
     /** Google sign-in, as switched in the admin. */
     google = true,
+    /** A computer without Claude Desktop yet. */
+    noDesktop = false,
     /** Sign-up only with an invitation code, Google included. */
     inviteOnly = false,
     /** Daily check-in: on, off in the admin, or not on the server yet. */
@@ -104,13 +61,66 @@ export function createMock(
     accounts: scenario === "out" ? [] : accounts.slice(),
     active: scenario === "out" ? null : (1 as number | null),
     orders: [] as any[],
+    /** Credit history, newest first: a sign-up bonus, an invite reward… */
+    credits: [
+      {
+        id: 6,
+        type: "signup",
+        value: 50,
+        status: "used",
+        used_at: hoursAgo(0.2),
+        created_at: hoursAgo(0.2),
+      },
+      ...[
+        {
+          id: 5,
+          type: "invite",
+          value: 2,
+          status: "used",
+          used_at: hoursAgo(3),
+          created_at: hoursAgo(3),
+        },
+        {
+          id: 4,
+          type: "checkin",
+          value: 0.12,
+          status: "used",
+          used_at: hoursAgo(20),
+          created_at: hoursAgo(20),
+        },
+        {
+          id: 3,
+          type: "balance",
+          value: 10,
+          status: "used",
+          used_at: hoursAgo(26),
+          created_at: hoursAgo(26),
+        },
+        {
+          id: 2,
+          type: "balance",
+          value: 20,
+          status: "used",
+          used_at: hoursAgo(240),
+          created_at: hoursAgo(240),
+        },
+        {
+          id: 1,
+          type: "balance",
+          value: 20,
+          status: "used",
+          used_at: hoursAgo(500),
+          created_at: hoursAgo(500),
+        },
+      ],
+    ],
     loginPolls: -1,
     payPolls: 0,
     codeFor: "",
     totpFor: 0,
     desktop: {
       supported: true,
-      installed: scenario !== "out",
+      installed: scenario !== "out" && !noDesktop,
       version: "1.3.12",
       running: true,
       installing: false,
@@ -428,13 +438,15 @@ export function createMock(
         db.orders.push(order);
         db.payPolls = 0;
         const { owner: _, ...pub } = order;
-        return { ...pub, qr: fakeQr(order.id) };
+        return pub;
       }
       case "order_pay": {
         const o = db.orders.find((x) => x.id === input.id);
         const { owner: _, ...pub } = o;
-        return { ...pub, qr: fakeQr(o.id) };
+        return pub;
       }
+      case "order_cashier":
+        return {};
       case "order_poll": {
         const o = db.orders.find((x) => x.id === input.id);
         db.payPolls += 1;
@@ -547,51 +559,7 @@ export function createMock(
           total_actual_cost: usage.reduce((s, u) => s + u.actual_cost, 0),
         };
       case "recharge_history":
-        return page(
-          [
-            {
-              id: 5,
-              type: "invite",
-              value: 2,
-              status: "used",
-              used_at: hoursAgo(3),
-              created_at: hoursAgo(3),
-            },
-            {
-              id: 4,
-              type: "checkin",
-              value: 0.12,
-              status: "used",
-              used_at: hoursAgo(20),
-              created_at: hoursAgo(20),
-            },
-            {
-              id: 3,
-              type: "balance",
-              value: 10,
-              status: "used",
-              used_at: hoursAgo(26),
-              created_at: hoursAgo(26),
-            },
-            {
-              id: 2,
-              type: "balance",
-              value: 20,
-              status: "used",
-              used_at: hoursAgo(240),
-              created_at: hoursAgo(240),
-            },
-            {
-              id: 1,
-              type: "balance",
-              value: 20,
-              status: "used",
-              used_at: hoursAgo(500),
-              created_at: hoursAgo(500),
-            },
-          ],
-          input.page ?? 1,
-        );
+        return page(db.credits, input.page ?? 1);
       case "key_create": {
         const g = groups.find((x) => x.id === input.group_id)!;
         const k = {
@@ -664,6 +632,16 @@ export function createMock(
         return JSON.parse(JSON.stringify(db.desktop));
       case "mock:google":
         google = args?.on === true;
+        return null;
+      case "mock:invite":
+        db.credits.unshift({
+          id: db.credits[0].id + 1,
+          type: "invite",
+          value: 2,
+          status: "used",
+          used_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+        });
         return null;
       case "mock:publish":
         db.notices.unshift({
