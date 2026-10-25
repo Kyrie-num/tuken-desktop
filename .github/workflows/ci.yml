@@ -2,8 +2,9 @@ name: 检查
 
 on:
   push:
-    branches: [main]
+    branches: [main, macos]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -35,3 +36,87 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
           cargo test
+
+  # The same checks on a Mac, then the real Claude Desktop: GitHub's Mac
+  # has none, so the end-to-end test installs it from Anthropic's disk
+  # image, opens it on 兔啃's profile and restarts it the way 兔啃 does.
+  check-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build:renderer
+      - name: Rust
+        working-directory: src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+      - name: Claude Desktop, end to end
+        working-directory: src-tauri
+        env:
+          TUKEN_E2E: "1"
+        run: cargo test macos_e2e -- --ignored --nocapture
+
+  # The universal disk image as a download of this run (no release). Built
+  # without update files: those need the release signing key.
+  dmg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: rustup toolchain install
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm tauri build --target universal-apple-darwin --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Look inside
+        working-directory: src-tauri/target/universal-apple-darwin/release/bundle
+        run: |
+          app=macos/Tuken.app
+          ls -la macos dmg
+          plutil -p "$app/Contents/Info.plist"
+          plutil -p "$app/Contents/Resources/zh-Hans.lproj/InfoPlist.strings"
+          lipo -info "$app"/Contents/MacOS/*
+          codesign -dv --verbose=4 "$app" 2>&1
+          codesign --verify --deep --strict --verbose=2 "$app"
+          # Without a Developer ID, Gatekeeper turns it down.
+          spctl --assess --type execute -vv "$app" || true
+          du -sh "$app" dmg/*.dmg
+          hdiutil imageinfo dmg/*.dmg | grep -E "Format|Checksum Type|Total Bytes" || true
+      - name: Open it once and take a picture
+        working-directory: src-tauri/target/universal-apple-darwin/release/bundle
+        run: |
+          open macos/Tuken.app
+          sleep 15
+          screencapture -x "$RUNNER_TEMP/tuken-macos.png" || true
+          pgrep -fl "Tuken.app/Contents/MacOS" || true
+          pkill -f "Tuken.app/Contents/MacOS" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Tuken-macos-universal
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Tuken-macos-screenshot
+          path: ${{ runner.temp }}/tuken-macos.png
+          if-no-files-found: warn
