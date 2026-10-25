@@ -3,6 +3,7 @@ name: 检查
 on:
   push:
     branches: [main, macos]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -37,9 +38,8 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test
 
-  # The same checks on a Mac, then the real Claude Desktop: GitHub's Mac
-  # has none, so the end-to-end test installs it from Anthropic's disk
-  # image, opens it on 兔啃's profile and restarts it the way 兔啃 does.
+  # The same checks on a Mac, and the vault's keychain key read by a copy
+  # signed anew, as an update of 兔啃 is. (Claude Desktop itself: e2e.yml.)
   check-macos:
     runs-on: macos-latest
     steps:
@@ -64,21 +64,17 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
           cargo test
-      - name: What claude.ai answers this Mac
-        run: |
-          for ua in "Tuken-Desktop/0.2.0" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"; do
-            echo "== $ua"
-            curl -sS -o /dev/null -D - -A "$ua" https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect               | grep -iE "^(HTTP|location|cf-mitigated|server)" || true
-          done
-      - name: Claude Desktop, end to end
+      - name: The vault key after an update
         working-directory: src-tauri
-        env:
-          TUKEN_E2E: "1"
-        run: cargo test macos_e2e -- --ignored --nocapture
+        run: cargo test macos_keychain -- --ignored --nocapture
 
-  # The universal disk image as a download of this run (no release). Built
-  # without update files: those need the release signing key.
+  # The universal disk image as a download of the run (no release), for main,
+  # tags and runs by hand. Built without update files: those need the
+  # release signing key.
   dmg:
+    if: >-
+      github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/macos'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -120,6 +116,8 @@ jobs:
     needs: dmg
     strategy:
       fail-fast: false
+      # GitHub runs 5 macOS jobs at once on this plan.
+      max-parallel: 3
       matrix:
         os: [macos-14, macos-15, macos-15-intel, macos-26]
     runs-on: ${{ matrix.os }}
