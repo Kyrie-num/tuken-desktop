@@ -1,39 +1,56 @@
-# 兔啃一键安装：下载最新的安装包并打开。在 PowerShell 里运行：
-#   irm https://fastly.jsdelivr.net/gh/Kyrie-num/tuken-desktop@main/install.ps1 | iex
+# Tuken installer. Downloads are served by Cloudflare R2.
+# irm https://download.tuken.site/install.ps1 | iex
+[CmdletBinding()]
+param([switch]$DownloadOnly)
 
-$ErrorActionPreference = "Stop"
-# Windows PowerShell 5.1 downloads far slower while it draws a progress bar.
-$ProgressPreference = "SilentlyContinue"
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-# jsDelivr serves this file without a charset, so Windows PowerShell reads its
-# UTF-8 as Latin-1. Such text is turned back before it is shown.
-function Say([string]$text) {
-  if ($text -notmatch '[^\x00-\xFF]') {
-    $text = [Text.Encoding]::UTF8.GetString([Text.Encoding]::GetEncoding(28591).GetBytes($text))
-  }
-  Write-Host $text
+function Get-TukenFile([string]$Url, [string]$Path) {
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri $Url -OutFile $Path -UseBasicParsing -TimeoutSec 120
+            return
+        } catch {
+            if ($attempt -eq 4) { throw }
+            Start-Sleep -Seconds 2
+        }
+    }
 }
 
-# GitHub is often unreliable without a proxy in mainland China: a few tries.
-function Get-File([string]$url, [string]$path) {
-  for ($i = 1; ; $i++) {
-    try { Invoke-WebRequest $url -OutFile $path -UseBasicParsing; return }
-    catch { if ($i -ge 4) { throw } Start-Sleep -Seconds 2 }
-  }
+if (-not [Environment]::Is64BitOperatingSystem) {
+    throw 'Tuken requires 64-bit Windows 10 or later.'
 }
-
-# The updater's manifest names the newest installer; no GitHub API, so no
-# rate limit for a campus behind one address.
-$base = "https://github.com/Kyrie-num/tuken-desktop/releases/latest/download"
-$manifest = Join-Path $env:TEMP "tuken-latest.json"
-Say "正在查找最新版本..."
-Get-File "$base/latest.json" $manifest
-$latest = Get-Content $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
-$url = $latest.platforms."windows-x86_64".url
-
-$setup = Join-Path $env:TEMP ([IO.Path]::GetFileName($url))
-Say "正在下载兔啃 $($latest.version)..."
-Get-File $url $setup
-Say "下载好了，正在打开安装程序"
-Start-Process $setup
+$base = 'https://download.tuken.site'
+$folder = Join-Path ([IO.Path]::GetTempPath()) ('tuken-install-' + [Guid]::NewGuid().ToString('N'))
+$null = New-Item -ItemType Directory -Path $folder
+$manifest = Join-Path $folder 'latest.json'
+Write-Host 'Checking the latest Tuken version...'
+Get-TukenFile "$base/latest.json" $manifest
+$latest = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+$platform = $latest.platforms.'windows-x86_64'
+$url = [Uri]$platform.url
+if ($url.Scheme -ne 'https' -or $url.Host -ne 'download.tuken.site' -or $url.Port -ne 443 -or $url.UserInfo -or $url.Query -or $url.Fragment) {
+    throw 'The update manifest contains an unexpected download address.'
+}
+$fileName = [IO.Path]::GetFileName($url.AbsolutePath)
+if ($url.AbsolutePath -notmatch '^/releases/v[0-9]+\.[0-9]+\.[0-9]+/Tuken_[0-9]+\.[0-9]+\.[0-9]+_x64-setup\.exe$') {
+    throw 'The update manifest contains an unexpected installer name.'
+}
+if ($platform.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or [long]$platform.size -le 0) {
+    throw 'The update manifest is missing the installer checksum or size.'
+}
+$setup = Join-Path $folder $fileName
+Write-Host "Downloading Tuken $($latest.version)..."
+Get-TukenFile $url.AbsoluteUri $setup
+$actual = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash
+if ($actual -ne $platform.sha256 -or (Get-Item -LiteralPath $setup).Length -ne [long]$platform.size) {
+    throw 'The downloaded installer failed verification. Please retry.'
+}
+if ($DownloadOnly) {
+    Write-Output $setup
+} else {
+    Write-Host 'Download verified. Opening the installer...'
+    Start-Process -FilePath $setup
+}

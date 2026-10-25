@@ -1,4 +1,4 @@
-//! Updates from 兔啃's GitHub releases. Each installer is signed with the
+//! Updates from 兔啃's Cloudflare R2 release feed. Each installer is signed with the
 //! release key, and the updater checks that signature before running it.
 
 use serde_json::{json, Value};

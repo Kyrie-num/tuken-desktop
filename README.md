@@ -17,7 +17,7 @@
 也可以在 PowerShell 里运行下面这行，自动下载最新版并打开安装程序：
 
 ```powershell
-irm https://fastly.jsdelivr.net/gh/Kyrie-num/tuken-desktop@main/install.ps1 | iex
+irm https://download.tuken.site/install.ps1 | iex
 ```
 
 ## 能做什么
