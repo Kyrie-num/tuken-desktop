@@ -5,7 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { Backdrop } from "@/components/Backdrop";
 import { cn } from "@/lib/cn";
-import { refreshCredit, useProfile } from "@/lib/queries";
+import type { AppState } from "@/lib/api";
+import { qk, refreshCredit, useProfile } from "@/lib/queries";
 import { Bills } from "@/features/bills/Bills";
 import { Home } from "@/features/home/Home";
 import { CheckinSheet } from "@/features/home/CheckinSheet";
@@ -23,6 +24,7 @@ import { UpdateNotice } from "@/features/update/Update";
 import { NoticesSheet } from "@/features/notice/Notices";
 import { LoginSheet } from "@/features/LoginSheet";
 import { LoginBanner, Welcome } from "@/features/Welcome";
+import { VaultLocked } from "@/features/VaultLocked";
 import { Tour } from "@/features/tour/Tour";
 import { Setup } from "@/features/setup/Setup";
 import { RewardNotice } from "@/features/rewards/RewardNotice";
@@ -33,9 +35,19 @@ const pages = { home: Home, bills: Bills, models: Models, profile: Profile };
 
 export function App() {
   const client = useQueryClient();
-  const { uid, loading } = useSession();
+  const { uid, loading, state } = useSession();
   const { page, rechargeOpen, startTour } = useUi();
   const setup = useSetup();
+
+  // Saved sign-ins that couldn't be read were set aside: say so, once.
+  const notice = state?.notice;
+  useEffect(() => {
+    if (!notice) return;
+    toast.info(notice, { id: "vault-notice", duration: 15_000 });
+    client.setQueryData<AppState>(qk.state, (s) =>
+      s ? { ...s, notice: undefined } : s,
+    );
+  }, [notice, client]);
 
   // The native worker can finish a payment while the recharge sheet is closed.
   useEffect(() => {
@@ -68,7 +80,11 @@ export function App() {
       <Toolbar />
       <main className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto">
         {loading ? null : !uid ? (
-          <Welcome />
+          state?.locked ? (
+            <VaultLocked why={state.locked} />
+          ) : (
+            <Welcome />
+          )
         ) : setup === "unknown" ? null : setup === "show" ? (
           <Setup />
         ) : (

@@ -60,6 +60,17 @@ pub struct Paths {
     library: PathBuf,
     cli_settings: PathBuf,
     backups: PathBuf,
+    /// Why these files may not be changed from here, if they may not.
+    read_only: Option<&'static str>,
+}
+
+/// A dev build changes Claude's files only in a sandbox: TUKEN_HOME (which
+/// `tuken-dev.sh` sets) moves every path into it. Without it, they would be
+/// the developer's own Claude Desktop and Claude Code.
+fn dev_guard(debug: bool, tuken_home: bool) -> Option<&'static str> {
+    (debug && !tuken_home).then_some(
+        "开发版不改动 Claude Desktop 和 Claude Code 的配置。请用 tuken-dev.sh 运行，或把 TUKEN_HOME 设成一个沙盒文件夹",
+    )
 }
 
 impl Paths {
@@ -74,7 +85,12 @@ impl Paths {
             .map(PathBuf::from)
             .or_else(dirs::home_dir)
             .ok_or("找不到用户目录")?;
-        Ok(Self::under(&local, &home, backups))
+        let mut paths = Self::under(&local, &home, backups);
+        paths.read_only = dev_guard(
+            cfg!(debug_assertions),
+            std::env::var_os("TUKEN_HOME").is_some(),
+        );
+        Ok(paths)
     }
 
     /// The real locations under the home directory; TUKEN_HOME redirects
@@ -85,7 +101,12 @@ impl Paths {
             .map(PathBuf::from)
             .or_else(dirs::home_dir)
             .ok_or("找不到用户目录")?;
-        Ok(Self::mac(&home, backups))
+        let mut paths = Self::mac(&home, backups);
+        paths.read_only = dev_guard(
+            cfg!(debug_assertions),
+            std::env::var_os("TUKEN_HOME").is_some(),
+        );
+        Ok(paths)
     }
 
     /// Windows: Claude Desktop's folders under %LOCALAPPDATA%.
@@ -138,7 +159,13 @@ impl Paths {
             library: threep.join("configLibrary"),
             cli_settings: home.join(".claude").join("settings.json"),
             backups,
+            read_only: None,
         }
+    }
+
+    /// Refuses before anything is written where this run may not write.
+    fn writable(&self) -> Result<(), String> {
+        self.read_only.map_or(Ok(()), |why| Err(why.into()))
     }
 
     fn profile(&self, id: &str) -> PathBuf {
@@ -338,6 +365,7 @@ fn is_ours(entry: &Value) -> bool {
 /// Makes Claude Desktop send its requests to 兔啃 with `key`. Takes effect the
 /// next time Claude Desktop starts.
 pub fn connect_desktop(p: &Paths, key: &str) -> Result<(), String> {
+    p.writable()?;
     let mut normal = Doc::read(&p.normal_config)?;
     let mut threep = Doc::read(&p.threep_config)?;
     let mut profile = Doc::read(&p.profile(PROFILE_ID))?;
@@ -386,6 +414,7 @@ pub fn connect_desktop(p: &Paths, key: &str) -> Result<(), String> {
 /// one, becomes the applied one; otherwise Claude Desktop returns to its
 /// official sign-in.
 pub fn disconnect_desktop(p: &Paths) -> Result<(), String> {
+    p.writable()?;
     let mut meta = Doc::read(&p.meta())?;
     let mut profile = Doc::read(&p.profile(PROFILE_ID))?;
     let mut normal = Doc::read(&p.normal_config)?;
@@ -460,6 +489,7 @@ pub fn model_list(models: &[String]) -> Result<Vec<String>, String> {
 /// default. New chats always start on the first model. Only on 兔啃's own
 /// profile while it is the applied one.
 pub fn set_desktop_models(p: &Paths, models: &[String], effort: &str) -> Result<(), String> {
+    p.writable()?;
     let applied = read_json(&p.meta())
         .and_then(|m| {
             m.get("appliedId")
@@ -535,6 +565,7 @@ pub fn desktop_key(p: &Paths) -> Option<String> {
 /// Points Claude Code (CLI and IDE extensions) at 兔啃 with `key`. New
 /// sessions pick it up; running ones keep their old settings.
 pub fn connect_cli(p: &Paths, key: &str) -> Result<(), String> {
+    p.writable()?;
     let mut settings = Doc::read(&p.cli_settings)?;
     for k in CLI_ROUTING_KEYS {
         settings.root.shift_remove(k);
@@ -553,6 +584,7 @@ pub fn connect_cli(p: &Paths, key: &str) -> Result<(), String> {
 
 /// Removes 兔啃 from Claude Code; settings that point elsewhere are left alone.
 pub fn disconnect_cli(p: &Paths) -> Result<(), String> {
+    p.writable()?;
     let mut settings = Doc::read(&p.cli_settings)?;
     let Some(env) = settings.root.get_mut("env").and_then(Value::as_object_mut) else {
         return Ok(());
@@ -639,6 +671,28 @@ mod tests {
         assert_eq!(read(&p.threep_config)["deploymentMode"], "3p");
         assert_eq!(read(&p.meta())["appliedId"], PROFILE_ID);
         assert_eq!(desktop_key(&p).as_deref(), Some("sk-mac"));
+    }
+
+    #[test]
+    fn dev_builds_write_only_in_their_sandbox() {
+        assert!(dev_guard(true, false).is_some());
+        assert_eq!(dev_guard(true, true), None);
+        assert_eq!(dev_guard(false, false), None);
+
+        let mut s = sandbox();
+        s.paths.read_only = dev_guard(true, false);
+        let models = ["claude-opus-4-1".to_string()];
+        for refused in [
+            connect_desktop(&s.paths, "sk-dev"),
+            disconnect_desktop(&s.paths),
+            set_desktop_models(&s.paths, &models, "max"),
+            connect_cli(&s.paths, "sk-dev"),
+            disconnect_cli(&s.paths),
+        ] {
+            assert!(refused.unwrap_err().contains("TUKEN_HOME"));
+        }
+        // Nothing was created anywhere.
+        assert!(!s.local.exists() && !s.home.exists() && !s.paths.backups.exists());
     }
 
     /// Claude Desktop only applies a library file whose id matches

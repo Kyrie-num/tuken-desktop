@@ -48,6 +48,8 @@ pnpm tauri dev
 
 打包安装程序用 `pnpm tauri build`，测试用 `pnpm test`。
 
+开发版（`pnpm tauri dev`）不改动这台电脑上 Claude Desktop 和 Claude Code 的配置。要试接入，先把 `TUKEN_HOME` 设成一个沙盒文件夹：macOS 上配置都会写进这个文件夹；Windows 上 Claude Desktop 的配置在 `%LOCALAPPDATA%`，要把 `LOCALAPPDATA` 也指过去。macOS 上开发版的账户数据和钥匙串项带 `.dev` 后缀，不碰正式版。
+
 ## 说明
 
 兔啃不是 Anthropic 的官方产品。Claude 是 Anthropic 的商标。

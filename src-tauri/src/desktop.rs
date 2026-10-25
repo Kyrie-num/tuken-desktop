@@ -337,7 +337,8 @@ pub async fn desktop_models(
 
 /// Installs Claude Desktop from Anthropic's disk image once its signature and
 /// notarization check out, reporting progress as `tuken://desktop-install`
-/// events. On any failure it opens the official download page instead, as
+/// events. Something on this Mac in the way (no room, no permission) is said
+/// as it is; any other failure opens the official download page instead, as
 /// Windows does without winget.
 #[cfg(target_os = "macos")]
 #[tauri::command]
@@ -358,9 +359,10 @@ pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
     INSTALLING.store(false, Ordering::SeqCst);
     match result {
         Ok(_) if find_install().is_some() => Ok(json!({"method": "dmg"})),
+        Err(crate::desktop_mac::Failure::Local(why)) => Err(why),
         outcome => {
             if let Err(e) = outcome {
-                log::warn!("Claude Desktop install failed: {e}");
+                log::warn!("Claude Desktop install failed: {e:?}");
             }
             app.opener()
                 .open_url(DOWNLOAD_PAGE, None::<&str>)

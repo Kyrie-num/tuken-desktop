@@ -18,6 +18,10 @@ export type AppState = {
   active: number | null;
   accounts: AccountSummary[];
   orders: Order[];
+  /** macOS: the keychain keeps the saved sign-ins shut; why, until 重试. */
+  locked?: string;
+  /** Saved sign-ins that couldn't be read were set aside: said once. */
+  notice?: string;
 };
 /** The server's sign-up rules; `available` once it has the native sign-in API. */
 export type AuthConfig =

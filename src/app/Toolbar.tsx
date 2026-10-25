@@ -26,18 +26,23 @@ function useFullscreen(watch: boolean) {
     } catch {
       return; // Not inside the app window (tests, a plain browser).
     }
+    let gone = false;
     let stop: (() => void) | undefined;
     const sync = () =>
       void w
         .isFullscreen()
-        .then(setFull)
+        .then((full) => !gone && setFull(full))
         .catch(() => {});
     sync();
     void w
       .onResized(sync)
-      .then((u) => (stop = u))
+      // Still listening after the toolbar went: stop at once.
+      .then((u) => (gone ? u() : (stop = u)))
       .catch(() => {});
-    return () => stop?.();
+    return () => {
+      gone = true;
+      stop?.();
+    };
   }, [watch]);
   return full;
 }

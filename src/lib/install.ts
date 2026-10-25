@@ -23,13 +23,18 @@ export function useInstallStep(active: boolean) {
       setStep(null);
       return;
     }
+    let gone = false;
     let stop: (() => void) | undefined;
     void listen<InstallStep>("tuken://desktop-install", (e) =>
       setStep(e.payload),
     )
-      .then((u) => (stop = u))
+      // Still listening after the page moved on: stop at once.
+      .then((u) => (gone ? u() : (stop = u)))
       .catch(() => {});
-    return () => stop?.();
+    return () => {
+      gone = true;
+      stop?.();
+    };
   }, [active]);
   return active ? step : null;
 }
