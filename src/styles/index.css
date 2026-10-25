@@ -1,0 +1,569 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * 兔啃 liquid glass.
+ * Colours are SUSTech's VI set: 南科大橙 #ED6C00 for actions, 墨绿 #003F43 for
+ * text, 天青 #2BB7B3 for "connected / fine". Glass only carries structure
+ * (toolbar, panels, sheets); text inside it is never blurred.
+ */
+:root {
+  color-scheme: light;
+  --ink: 0 63 67;
+  --orange: 237 108 0;
+  --cyan: 43 183 179;
+  --cyan-ink: 16 128 124;
+  --danger: 205 61 56;
+  --glass: 255 255 255;
+  --base: 233 243 242;
+  --rim: 255 255 255;
+  --shade: 0 44 48;
+}
+
+.dark {
+  color-scheme: dark;
+  --ink: 226 242 240;
+  --orange: 255 138 42;
+  --cyan: 64 206 200;
+  --cyan-ink: 98 222 216;
+  --danger: 255 112 104;
+  --glass: 24 58 62;
+  --base: 6 26 29;
+  --rim: 190 236 232;
+  --shade: 0 0 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: transparent;
+  color: rgb(var(--ink));
+  font-family: theme("fontFamily.sans");
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  /* A desktop app: text is selectable only where it is data. */
+  user-select: none;
+  cursor: default;
+}
+
+/* Without Windows 11 Mica the page paints its own base. */
+html:not([data-backdrop="mica"]) body {
+  background: rgb(var(--base));
+}
+
+input,
+textarea,
+.selectable {
+  user-select: text;
+}
+
+button {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--cyan));
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgb(var(--cyan) / 0.3);
+}
+
+/* Thin, quiet scrollbars that sit on glass. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgb(var(--ink) / 0.18) padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--ink) / 0.3) padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tnum {
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- backdrop */
+
+/* Slow colour fields behind everything, so the glass has something to bend. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.backdrop .field {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  will-change: transform;
+  animation: drift 42s ease-in-out infinite alternate;
+}
+.backdrop .f1 {
+  width: 560px;
+  height: 560px;
+  left: -160px;
+  top: -200px;
+  background: radial-gradient(
+    circle,
+    rgb(var(--orange) / 0.42),
+    transparent 68%
+  );
+}
+.backdrop .f2 {
+  width: 620px;
+  height: 620px;
+  right: -200px;
+  top: 60px;
+  background: radial-gradient(circle, rgb(var(--cyan) / 0.45), transparent 66%);
+  animation-duration: 54s;
+  animation-direction: alternate-reverse;
+}
+.backdrop .f3 {
+  width: 680px;
+  height: 680px;
+  left: 18%;
+  bottom: -420px;
+  background: radial-gradient(circle, rgb(0 63 67 / 0.32), transparent 70%);
+  animation-duration: 64s;
+}
+.dark .backdrop .f3 {
+  background: radial-gradient(circle, rgb(43 183 179 / 0.18), transparent 70%);
+}
+html[data-backdrop="mica"] .backdrop .field {
+  opacity: 0.7;
+}
+
+@keyframes drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(70px, 40px, 0) scale(1.08);
+  }
+  100% {
+    transform: translate3d(-40px, 80px, 0) scale(0.95);
+  }
+}
+
+/* ------------------------------------------------------------------- glass */
+
+@layer components {
+  .glass {
+    position: relative;
+    isolation: isolate;
+    border-radius: theme("borderRadius.glass");
+    background: linear-gradient(
+      140deg,
+      rgb(var(--glass) / 0.66) 0%,
+      rgb(var(--glass) / 0.42) 55%,
+      rgb(var(--glass) / 0.5) 100%
+    );
+    backdrop-filter: blur(26px) saturate(175%);
+    box-shadow:
+      inset 0 1px 0 0 rgb(var(--rim) / 0.7),
+      inset 0 0 0 1px rgb(var(--rim) / 0.3),
+      inset 0 -10px 24px -18px rgb(var(--shade) / 0.18),
+      0 18px 40px -24px rgb(var(--shade) / 0.42),
+      0 2px 6px -2px rgb(var(--shade) / 0.12);
+  }
+  .dark .glass {
+    background: linear-gradient(
+      140deg,
+      rgb(var(--glass) / 0.62) 0%,
+      rgb(var(--glass) / 0.38) 55%,
+      rgb(var(--glass) / 0.48) 100%
+    );
+    box-shadow:
+      inset 0 1px 0 0 rgb(var(--rim) / 0.16),
+      inset 0 0 0 1px rgb(var(--rim) / 0.09),
+      0 20px 44px -24px rgb(0 0 0 / 0.8);
+  }
+  /* The specular sheen of a curved surface, brightest at the top-left edge. */
+  .glass::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        120% 70% at 0% 0%,
+        rgb(255 255 255 / 0.32),
+        transparent 55%
+      ),
+      radial-gradient(
+        80% 50% at 100% 100%,
+        rgb(255 255 255 / 0.1),
+        transparent 60%
+      );
+  }
+  .dark .glass::before {
+    background: radial-gradient(
+      120% 70% at 0% 0%,
+      rgb(255 255 255 / 0.08),
+      transparent 55%
+    );
+  }
+
+  /* The balance lens bends what is behind it (Chromium reads SVG filters in
+     backdrop-filter; anything else keeps the plain blur above). */
+  .glass-lens {
+    backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: url(#tuken-refract) blur(3px) saturate(190%);
+  }
+
+  /* ---------------------------------------------------------------- buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    height: 36px;
+    padding: 0 16px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition:
+      transform 0.18s theme("transitionTimingFunction.liquid"),
+      box-shadow 0.2s,
+      background-color 0.2s,
+      filter 0.2s,
+      opacity 0.2s;
+  }
+  .btn:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+  }
+  .btn-sm {
+    height: 30px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+  .btn-lg {
+    height: 44px;
+    padding: 0 22px;
+    font-size: 15px;
+  }
+  .btn-primary {
+    color: #fff;
+    background: linear-gradient(
+      180deg,
+      rgb(255 152 70),
+      rgb(var(--orange)) 70%
+    );
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.5),
+      inset 0 -1px 0 rgb(0 0 0 / 0.12),
+      0 8px 18px -8px rgb(var(--orange) / 0.85);
+  }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.05) saturate(1.05);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.55),
+      inset 0 -1px 0 rgb(0 0 0 / 0.12),
+      0 10px 24px -8px rgb(var(--orange) / 0.95);
+  }
+  .btn-glass {
+    color: rgb(var(--ink));
+    background: rgb(var(--glass) / 0.55);
+    backdrop-filter: blur(18px) saturate(160%);
+    box-shadow:
+      inset 0 1px 0 rgb(var(--rim) / 0.7),
+      inset 0 0 0 1px rgb(var(--rim) / 0.32),
+      0 3px 10px -4px rgb(var(--shade) / 0.25);
+  }
+  .dark .btn-glass {
+    background: rgb(var(--glass) / 0.6);
+    box-shadow:
+      inset 0 1px 0 rgb(var(--rim) / 0.18),
+      inset 0 0 0 1px rgb(var(--rim) / 0.1),
+      0 3px 10px -4px rgb(0 0 0 / 0.5);
+  }
+  .btn-glass:hover:not(:disabled) {
+    background: rgb(var(--glass) / 0.75);
+  }
+  .btn-ghost {
+    color: rgb(var(--ink) / 0.82);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: rgb(var(--ink) / 0.07);
+    color: rgb(var(--ink));
+  }
+  .btn-danger {
+    color: #fff;
+    background: linear-gradient(180deg, rgb(232 96 88), rgb(var(--danger)));
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.4),
+      0 8px 18px -8px rgb(var(--danger) / 0.8);
+  }
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    color: rgb(var(--ink) / 0.78);
+    transition:
+      background-color 0.18s,
+      color 0.18s,
+      transform 0.18s theme("transitionTimingFunction.liquid");
+  }
+  .icon-btn:hover:not(:disabled) {
+    background: rgb(var(--ink) / 0.08);
+    color: rgb(var(--ink));
+  }
+  .icon-btn:active:not(:disabled) {
+    transform: scale(0.92);
+  }
+  .icon-btn:disabled {
+    opacity: 0.4;
+  }
+
+  /* ----------------------------------------------------------------- fields */
+  .field {
+    height: 40px;
+    width: 100%;
+    padding: 0 14px;
+    border-radius: theme("borderRadius.field");
+    border: 0;
+    color: rgb(var(--ink));
+    background: rgb(var(--glass) / 0.5);
+    box-shadow:
+      inset 0 1px 2px rgb(var(--shade) / 0.1),
+      inset 0 0 0 1px rgb(var(--ink) / 0.1);
+    transition: box-shadow 0.18s;
+  }
+  .field::placeholder {
+    color: rgb(var(--ink) / 0.42);
+  }
+  .field:focus {
+    outline: none;
+    box-shadow:
+      inset 0 1px 2px rgb(var(--shade) / 0.1),
+      inset 0 0 0 1.5px rgb(var(--cyan)),
+      0 0 0 4px rgb(var(--cyan) / 0.18);
+  }
+
+  /* Rows of fields in one inset well, the way a native sign-in form reads. */
+  .field-group {
+    border-radius: 16px;
+    background: rgb(var(--glass) / 0.5);
+    box-shadow:
+      inset 0 1px 2px rgb(var(--shade) / 0.1),
+      inset 0 0 0 1px rgb(var(--ink) / 0.1);
+    transition: box-shadow 0.18s;
+  }
+  .field-group:focus-within {
+    box-shadow:
+      inset 0 1px 2px rgb(var(--shade) / 0.1),
+      inset 0 0 0 1.5px rgb(var(--cyan)),
+      0 0 0 4px rgb(var(--cyan) / 0.18);
+  }
+  .field-group > * + * {
+    border-top: 1px solid rgb(var(--ink) / 0.08);
+  }
+  .field-row {
+    display: flex;
+    align-items: center;
+    height: 46px;
+    padding-right: 6px;
+  }
+  .field-row > input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    padding: 0 16px;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: rgb(var(--ink));
+    font-size: 15px;
+  }
+  .field-row > input::placeholder {
+    color: rgb(var(--ink) / 0.42);
+  }
+  /* The row being typed in, inside the lit well. */
+  .field-row:focus-within {
+    background: rgb(var(--glass) / 0.3);
+  }
+  .field-group > :first-child .field-row,
+  .field-group > .field-row:first-child {
+    border-radius: 16px 16px 0 0;
+  }
+  .field-group > :last-child .field-row,
+  .field-group > .field-row:last-child {
+    border-radius: 0 0 16px 16px;
+  }
+  .field-group > :only-child .field-row,
+  .field-group > .field-row:only-child {
+    border-radius: 16px;
+  }
+
+  /* A choice tile (amount, group): glass that lights up when chosen. */
+  .tile {
+    border-radius: theme("borderRadius.tile");
+    background: rgb(var(--glass) / 0.42);
+    box-shadow: inset 0 0 0 1px rgb(var(--ink) / 0.1);
+    transition:
+      background-color 0.2s,
+      box-shadow 0.2s,
+      transform 0.18s theme("transitionTimingFunction.liquid");
+  }
+  .tile:hover:not(:disabled) {
+    background: rgb(var(--glass) / 0.68);
+  }
+  .tile:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+  .tile[aria-checked="true"] {
+    background: rgb(var(--glass) / 0.85);
+    box-shadow:
+      inset 0 0 0 2px rgb(var(--orange)),
+      0 10px 24px -14px rgb(var(--orange) / 0.9);
+  }
+  .tile:disabled {
+    opacity: 0.45;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    background: rgb(var(--ink) / 0.07);
+    color: rgb(var(--ink) / 0.78);
+  }
+  .chip-ok {
+    background: rgb(var(--cyan) / 0.16);
+    color: rgb(var(--cyan-ink));
+  }
+  .chip-warn {
+    background: rgb(var(--orange) / 0.14);
+    color: rgb(var(--orange));
+  }
+  .chip-off {
+    background: rgb(var(--ink) / 0.06);
+    color: rgb(var(--ink) / 0.5);
+  }
+
+  /* A row inside a glass panel. */
+  .row {
+    border-radius: 16px;
+    transition: background-color 0.18s;
+  }
+  .row:hover {
+    background: rgb(var(--ink) / 0.045);
+  }
+
+  .skeleton {
+    border-radius: 8px;
+    background: linear-gradient(
+      90deg,
+      rgb(var(--ink) / 0.06),
+      rgb(var(--ink) / 0.12),
+      rgb(var(--ink) / 0.06)
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ------------------------------------------------------------ sheets, menus */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgb(var(--base) / 0.35);
+  backdrop-filter: blur(6px);
+}
+.scrim[data-state="open"] {
+  animation: fade-in 0.2s ease-out;
+}
+.scrim[data-state="closed"] {
+  animation: fade-out 0.15s ease-in;
+}
+.sheet[data-state="open"] {
+  animation: sheet-in 0.32s theme("transitionTimingFunction.liquid");
+}
+.sheet[data-state="closed"] {
+  animation: sheet-out 0.16s ease-in;
+}
+.menu[data-state="open"] {
+  animation: menu-in 0.18s theme("transitionTimingFunction.liquid");
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 18px)) scale(0.97);
+  }
+}
+@keyframes sheet-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px)) scale(0.98);
+  }
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop .field,
+  .skeleton,
+  .sheet,
+  .scrim,
+  .menu {
+    animation: none !important;
+  }
+}

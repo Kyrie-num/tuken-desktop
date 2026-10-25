@@ -1,0 +1,16 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.log
+.env
+.env.local
+*.tsbuildinfo
+
+# Local notes for agents and the server: not for the public repo.
+AGENTS.md
+docs/
+
+# Update signing keys live outside the repo; never commit one.
+*.key
+.claude/

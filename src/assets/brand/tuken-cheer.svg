@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 200 200" width="200" height="200"><defs>
+    <g id="token-cyan">
+      <circle r="15" fill="#2BB7B3" stroke="#003F43" stroke-width="4"/>
+      <circle r="9" fill="none" stroke="#D5F1F0" stroke-width="3"/>
+    </g>
+    <symbol id="tuken-mini" viewBox="0 0 200 200">
+      <path d="M79 78C70 48 72 18 85 16C98 16 97 48 93 76" fill="#fff" stroke="#003F43" stroke-width="12" stroke-linejoin="round"/>
+      <path d="M110 76C120 54 146 45 162 51C171 55 165 66 152 66C138 66 127 73 121 82" fill="#fff" stroke="#003F43" stroke-width="12" stroke-linejoin="round"/>
+      <path d="M52 150C44 116 58 72 100 70C142 72 156 116 148 150C145 166 128 172 100 172C72 172 55 166 52 150Z" fill="#fff" stroke="#003F43" stroke-width="12" stroke-linejoin="round"/>
+      <circle cx="82" cy="106" r="10" fill="#003F43"/>
+      <circle cx="118" cy="106" r="10" fill="#003F43"/>
+      <path d="M118 130C130 136 132 148 122 154L66 176C60 178 56 172 60 168L104 134C108 130 113 128 118 130Z" fill="#ED6C00" stroke="#003F43" stroke-width="10" stroke-linejoin="round"/>
+      <path d="M128 136C140 126 150 123 157 126" fill="none" stroke="#2BB7B3" stroke-width="11" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-a" viewBox="0 0 120 120"><rect width="120" height="120" rx="26" fill="#2BB7B3"/><use href="#tuken" x="-8.2" y="-2.1" width="126.8" height="126.8"/></symbol>
+    <symbol id="icon-b" viewBox="0 0 120 120"><rect width="120" height="120" rx="26" fill="#ED6C00"/><use href="#tuken" x="-8.2" y="-2.1" width="126.8" height="126.8"/></symbol>
+    <symbol id="icon-c" viewBox="0 0 120 120"><rect width="120" height="120" rx="26" fill="#003F43"/><use href="#tuken" x="-8.2" y="-2.1" width="126.8" height="126.8" style="--fur: #F18933"/></symbol>
+    <symbol id="icon-a-mini" viewBox="0 0 120 120"><rect width="120" height="120" rx="26" fill="#2BB7B3"/><use href="#tuken-mini" x="-8.2" y="-2.1" width="126.8" height="126.8"/></symbol>
+    <symbol id="icon-b-mini" viewBox="0 0 120 120"><rect width="120" height="120" rx="26" fill="#ED6C00"/><use href="#tuken-mini" x="-8.2" y="-2.1" width="126.8" height="126.8"/></symbol>
+    <symbol id="icon-c-mini" viewBox="0 0 120 120"><rect width="120" height="120" rx="26" fill="#003F43"/><use href="#tuken-mini" x="-8.2" y="-2.1" width="126.8" height="126.8" style="--fur: #F18933"/></symbol>
+
+    <!-- 全身：兔子底座 -->
+    <g id="tuken-base">
+      <path d="M79 78C70 48 72 18 85 16C98 16 97 48 93 76" fill="#fff" stroke="#003F43" stroke-width="5" stroke-linejoin="round"/>
+      <path d="M83 66C79 46 80 29 85 28C90 29 89 46 88 64" fill="#FBE2CC"/>
+      <path d="M110 76C120 54 146 45 162 51C171 55 165 66 152 66C138 66 127 73 121 82" fill="#fff" stroke="#003F43" stroke-width="5" stroke-linejoin="round"/>
+      <path d="M126 70C135 60 148 55 157 57C150 60 139 63 131 72" fill="#FBE2CC"/>
+      <ellipse cx="80" cy="172" rx="15" ry="8" fill="#fff" stroke="#003F43" stroke-width="5"/>
+      <ellipse cx="120" cy="172" rx="15" ry="8" fill="#fff" stroke="#003F43" stroke-width="5"/>
+      <path d="M52 150C44 116 58 72 100 70C142 72 156 116 148 150C145 166 128 172 100 172C72 172 55 166 52 150Z" fill="#fff" stroke="#003F43" stroke-width="5" stroke-linejoin="round"/>
+      <ellipse cx="67" cy="121" rx="9" ry="5.5" fill="#FF9F87" opacity=".8"/>
+      <ellipse cx="133" cy="121" rx="9" ry="5.5" fill="#FF9F87" opacity=".8"/>
+    </g>
+    <g id="carrot">
+      <path d="M124 136C140 124 152 120 158 124C152 128 144 134 134 142Z" fill="#2BB7B3" stroke="#003F43" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M126 142C142 138 154 140 158 146C150 147 141 148 130 150Z" fill="#2BB7B3" stroke="#003F43" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M118 130C130 136 132 148 122 154L66 176C60 178 56 172 60 168L104 134C108 130 113 128 118 130Z" fill="#ED6C00" stroke="#003F43" stroke-width="4.5" stroke-linejoin="round"/>
+      <path d="M92 152L99 159M78 162L84 167" stroke="#003F43" stroke-width="3.5" stroke-linecap="round"/>
+    </g>
+    <g id="happy-eyes"><path d="M74 104Q82 96 90 104M110 104Q118 96 126 104" fill="none" stroke="#003F43" stroke-width="5" stroke-linecap="round"/></g>
+
+    <symbol id="tuken" viewBox="0 0 200 200">
+      <use href="#tuken-base"/>
+      <circle cx="82" cy="104" r="6.5" fill="#003F43"/>
+      <circle cx="118" cy="104" r="6.5" fill="#003F43"/>
+      <circle cx="80" cy="101.5" r="2.2" fill="#fff"/>
+      <circle cx="116" cy="101.5" r="2.2" fill="#fff"/>
+      <ellipse cx="100" cy="116" rx="4.5" ry="3.2" fill="#FF9F87"/>
+      <use href="#carrot"/>
+      <path d="M95.5 122H104.5V131Q104.5 133 102.5 133H97.5Q95.5 133 95.5 131Z" fill="#fff" stroke="#003F43" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M100 122.5V132.5" stroke="#003F43" stroke-width="2.2"/>
+      <path d="M90 120Q95 125 100 120.5Q105 125 110 120" fill="none" stroke="#003F43" stroke-width="3.5" stroke-linecap="round"/>
+      <ellipse cx="91" cy="154" rx="9.5" ry="7.5" fill="#fff" stroke="#003F43" stroke-width="4" transform="rotate(-20 91 154)"/>
+      <ellipse cx="117" cy="147" rx="9.5" ry="7.5" fill="#fff" stroke="#003F43" stroke-width="4" transform="rotate(-20 117 147)"/>
+    </symbol>
+    <symbol id="tuken-cheer" viewBox="0 0 200 200">
+      <use href="#tuken-base"/>
+      <use href="#happy-eyes"/>
+      <path d="M90 120Q100 134 110 120Z" fill="#003F43" stroke="#003F43" stroke-width="3.5" stroke-linejoin="round"/>
+      <ellipse cx="58" cy="100" rx="10" ry="8" fill="#fff" stroke="#003F43" stroke-width="4"/>
+      <ellipse cx="142" cy="100" rx="10" ry="8" fill="#fff" stroke="#003F43" stroke-width="4"/>
+      <use href="#token-cyan" x="128" y="28"/>
+      <path d="M112 12L108 6M146 14L151 9M150 34L157 35" stroke="#003F43" stroke-width="3.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="tuken-thanks" viewBox="0 0 200 200">
+      <use href="#tuken-base"/>
+      <use href="#happy-eyes"/>
+      <ellipse cx="100" cy="116" rx="4.5" ry="3.2" fill="#FF9F87"/>
+      <path d="M92 121Q96 126 100 121.5Q104 126 108 121" fill="none" stroke="#003F43" stroke-width="3.5" stroke-linecap="round"/>
+      <path d="M88 152Q100 124 112 152Q100 162 88 152Z" fill="#fff" stroke="#003F43" stroke-width="4" stroke-linejoin="round"/>
+      <path d="M100 133V156" stroke="#003F43" stroke-width="3"/>
+      <path d="M166 92c-6-8-18-2-12 8l12 12l12-12c6-10-6-16-12-8z" fill="#ED6C00" stroke="#003F43" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M34 90c-4-5-12-1-8 5l8 8l8-8c4-6-4-10-8-5z" fill="#ED6C00" stroke="#003F43" stroke-width="2.5" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="tuken-ddl" viewBox="0 0 200 200">
+      <use href="#tuken-base"/>
+      <path d="M55 90Q100 74 145 90L143 100Q100 85 57 100Z" fill="#ED6C00" stroke="#003F43" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M142 91L163 81L160 95ZM142 96L161 104L151 109Z" fill="#ED6C00" stroke="#003F43" stroke-width="3" stroke-linejoin="round"/>
+      <text x="100" y="91" text-anchor="middle" font-family="Candara, sans-serif" font-weight="700" font-size="11" fill="#fff">DDL</text>
+      <path d="M74 104L86 110L74 116M126 104L114 110L126 116" fill="none" stroke="#003F43" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="88" y="122" width="24" height="12" rx="4" fill="#fff" stroke="#003F43" stroke-width="3.5"/>
+      <path d="M96 122V134M104 122V134" stroke="#003F43" stroke-width="2.5"/>
+      <ellipse cx="62" cy="146" rx="11" ry="9" fill="#fff" stroke="#003F43" stroke-width="4"/>
+      <ellipse cx="138" cy="146" rx="11" ry="9" fill="#fff" stroke="#003F43" stroke-width="4"/>
+      <path d="M20 118H36M16 134H32M164 118H180M168 134H184" stroke="#2BB7B3" stroke-width="4" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="tuken-error" viewBox="0 0 200 200">
+      <use href="#tuken-base"/>
+      <path d="M72 102Q82 110 92 102M108 102Q118 110 128 102" fill="none" stroke="#003F43" stroke-width="5" stroke-linecap="round"/>
+      <path d="M78 108V146Q82 152 86 146V108Z" fill="#2BB7B3" opacity=".85"/>
+      <path d="M114 108V146Q118 152 122 146V108Z" fill="#2BB7B3" opacity=".85"/>
+      <path d="M90 128Q95 123 100 128Q105 133 110 128" fill="none" stroke="#003F43" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="152" cy="92" r="13" fill="#ED6C00" stroke="#003F43" stroke-width="3.5"/>
+      <path d="M152 84V94" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="152" cy="100" r="2.4" fill="#fff"/>
+      <path d="M40 180L70 168L74 176Z" fill="#ED6C00" stroke="#003F43" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M128 170C138 164 150 165 152 172L131 180Z" fill="#ED6C00" stroke="#003F43" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M150 166C156 156 164 154 168 158C162 160 158 164 154 170Z" fill="#2BB7B3" stroke="#003F43" stroke-width="3" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="tuken-flat" viewBox="0 0 200 200">
+      <g transform="translate(10 -8) rotate(-90 100 112)">
+        <use href="#tuken-base"/>
+      </g>
+      <path d="M94 90L104 100M104 90L94 100M94 112L104 122M104 112L94 122" stroke="#003F43" stroke-width="4" stroke-linecap="round"/>
+      <path d="M118 104Q122 98 126 104" fill="none" stroke="#003F43" stroke-width="3.5" stroke-linecap="round"/>
+      <g transform="translate(-26 26) rotate(12 110 150) scale(.92)"><use href="#carrot"/></g>
+    </symbol>
+  </defs><use href="#tuken-cheer" xlink:href="#tuken-cheer" width="200" height="200"/></svg>
