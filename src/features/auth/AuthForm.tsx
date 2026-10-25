@@ -406,8 +406,8 @@ export function AuthForm({
         </button>
       )}
       {/* Google signs in, or makes the account on first sign-in; from 注册 it
-          brings the invitation code along. */}
-      {(mode === "login" || mode === "register") && (
+          brings the invitation code along. Only while the admin has it on. */}
+      {(mode === "login" || mode === "register") && rules?.google && (
         <>
           <div
             aria-hidden="true"

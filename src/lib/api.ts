@@ -35,6 +35,8 @@ export type AuthConfig =
       invite_enabled?: boolean;
       /** Sign-up only with an invitation code. */
       invite_required?: boolean;
+      /** Google sign-in is on in the admin. */
+      google?: boolean;
     };
 export type Profile = {
   id: number;

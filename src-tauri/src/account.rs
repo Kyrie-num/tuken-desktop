@@ -83,7 +83,9 @@ fn announcement_view(a: &Value) -> Value {
 
 /// The site's contact details, from its public settings. Not cached: an
 /// admin's edit shows the next time the sheet opens.
-async fn site() -> Result<Value, String> {
+/// The site's public settings: contact details, the sign-in providers the
+/// admin has switched on.
+async fn public_settings() -> Result<Value, String> {
     let r = api::send(
         &format!("{SITE}/api/v1/settings/public"),
         Method::GET,
@@ -91,7 +93,11 @@ async fn site() -> Result<Value, String> {
         None,
     )
     .await?;
-    let s = &r["data"];
+    Ok(r["data"].clone())
+}
+
+async fn site() -> Result<Value, String> {
+    let s = public_settings().await?;
     let text = |k: &str| s[k].as_str().unwrap_or_default().trim().to_string();
     Ok(json!({ "contact": text("contact_info") }))
 }
@@ -493,7 +499,9 @@ fn email(input: &Value) -> Result<String, String> {
 
 /// The rules the sign-up screen follows, from the server's sign-in config. The
 /// names match the site's public settings.
-fn auth_rules(c: &Value) -> Value {
+/// `public`: the site's public settings, for Google sign-in's switch in the
+/// admin. Without them Google stays hidden.
+fn auth_rules(c: &Value, public: Option<&Value>) -> Value {
     let suffixes: Vec<&str> = c["registration_email_suffix_whitelist"]
         .as_array()
         .map(|a| a.iter().filter_map(Value::as_str).collect())
@@ -507,6 +515,7 @@ fn auth_rules(c: &Value) -> Value {
         "email_suffixes": suffixes,
         "invite_enabled": c["invite_enabled"].as_bool().unwrap_or(false),
         "invite_required": c["invite_required"].as_bool().unwrap_or(false),
+        "google": public.is_some_and(|p| p["google_oauth_enabled"] == true),
     })
 }
 
@@ -570,8 +579,10 @@ async fn auth_action(
                 return Ok(data);
             }
             // Until the server has the desktop sign-in API, sign-in uses the site.
-            let data = match api::auth(Method::GET, "/config", None).await {
-                Ok(c) => auth_rules(&c),
+            let (config, public) =
+                tokio::join!(api::auth(Method::GET, "/config", None), public_settings());
+            let data = match config {
+                Ok(c) => auth_rules(&c, public.ok().as_ref()),
                 Err(r) if r.reason == "NOT_SUPPORTED" => json!({ "available": false }),
                 // A network failure is no answer: ask again next time.
                 Err(_) => return Ok(json!({ "available": false, "offline": true })),
@@ -1058,12 +1069,18 @@ mod tests {
 
     #[test]
     fn sign_up_follows_the_server_rules() {
-        let rules = auth_rules(&json!({
+        let config = json!({
             "registration_enabled": true,
             "password_min_length": 6,
             "registration_email_suffix_whitelist": ["@mail.sustech.edu.cn", 3],
-        }));
+        });
+        let rules = auth_rules(&config, Some(&json!({"google_oauth_enabled": true})));
         assert_eq!(rules["available"], true);
+        assert_eq!(rules["google"], true);
+        // Google shows only when the admin has it on, and we know it.
+        let off = json!({"google_oauth_enabled": false});
+        assert_eq!(auth_rules(&config, Some(&off))["google"], false);
+        assert_eq!(auth_rules(&config, None)["google"], false);
         assert_eq!(rules["password_reset_enabled"], false);
         assert_eq!(rules["email_suffixes"], json!(["@mail.sustech.edu.cn"]));
 

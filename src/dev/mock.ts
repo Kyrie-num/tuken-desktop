@@ -79,6 +79,8 @@ export function createMock(
     urgentNotice = false,
     /** A newer 兔啃 on GitHub. */
     update = "",
+    /** Google sign-in, as switched in the admin. */
+    google = true,
     /** Sign-up only with an invitation code, Google included. */
     inviteOnly = false,
     /** Daily check-in: on, off in the admin, or not on the server yet. */
@@ -278,6 +280,7 @@ export function createMock(
           email_suffixes: [],
           invite_enabled: true,
           invite_required: inviteOnly,
+          google,
         };
       case "auth_login": {
         const a = known.find((x) => x.email === emailOf(input));

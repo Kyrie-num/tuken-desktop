@@ -162,6 +162,16 @@ describe("兔啃", () => {
     ).toBeInTheDocument();
   });
 
+  it("hides Google sign-in while the admin has it off", async () => {
+    const user = userEvent.setup();
+    show("out", { google: false });
+    await screen.findByRole("button", { name: "登录" });
+    expect(screen.queryByRole("button", { name: /Google/ })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "注册" }));
+    await screen.findByLabelText("邮箱验证码");
+    expect(screen.queryByRole("button", { name: /Google/ })).toBeNull();
+  });
+
   it("moves a Google sign-in to the browser, or cancels it", async () => {
     const user = userEvent.setup();
     const invoke = show("out", { googleAfter: 60_000 });

@@ -22,7 +22,6 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "@/components/Menu";
-import { GoogleLogo } from "@/components/GoogleLogo";
 import { tuken, type AppState } from "@/lib/api";
 import { initial } from "@/lib/format";
 import { prefetchAccount, qk, useInvite, useUpdate } from "@/lib/queries";
@@ -122,18 +121,6 @@ export function AccountMenu() {
           </span>
           添加账户
         </MenuItem>
-        {/* The native form has its own Google button. */}
-        {!login.config?.available && (
-          <MenuItem
-            onSelect={() => void login.startGoogle()}
-            disabled={login.busy || !!login.code || !!login.google}
-          >
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink/[0.07]">
-              <GoogleLogo size={13} />
-            </span>
-            用 Google 添加账户
-          </MenuItem>
-        )}
         <MenuSeparator />
         <MenuItem onSelect={() => go("profile")}>
           <UserRound size={16} className="opacity-70" />
