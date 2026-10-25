@@ -361,8 +361,8 @@ pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
         Ok(_) if find_install().is_some() => Ok(json!({"method": "dmg"})),
         Err(crate::desktop_mac::Failure::Local(why)) => Err(why),
         outcome => {
-            if let Err(e) = outcome {
-                log::warn!("Claude Desktop install failed: {e:?}");
+            if let Err(crate::desktop_mac::Failure::Elsewhere(why)) = &outcome {
+                log::warn!("Claude Desktop install failed: {why}");
             }
             app.opener()
                 .open_url(DOWNLOAD_PAGE, None::<&str>)
