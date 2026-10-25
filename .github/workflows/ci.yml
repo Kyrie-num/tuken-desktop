@@ -108,21 +108,39 @@ jobs:
           spctl --assess --type execute -vv "$app" || true
           du -sh "$app" dmg/*.dmg
           hdiutil imageinfo dmg/*.dmg | grep -E "Format|Checksum Type|Total Bytes" || true
-      - name: Open it once and take a picture
-        working-directory: src-tauri/target/universal-apple-darwin/release/bundle
-        run: |
-          open macos/Tuken.app
-          sleep 15
-          screencapture -x "$RUNNER_TEMP/tuken-macos.png" || true
-          pgrep -fl "Tuken.app/Contents/MacOS" || true
-          pkill -f "Tuken.app/Contents/MacOS" || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Tuken-macos-universal
           path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
+
+  # The disk image on each macOS that GitHub has, Intel included: 兔啃 must
+  # start, and a picture of each shows how it looks there.
+  smoke:
+    needs: dmg
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-15-intel, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Tuken-macos-universal
+      - name: Open 兔啃
+        run: |
+          sw_vers
+          uname -m
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" Tuken_*_universal.dmg
+          ls "$RUNNER_TEMP/dmg"
+          ditto "$RUNNER_TEMP/dmg/Tuken.app" "$RUNNER_TEMP/Tuken.app"
+          hdiutil detach "$RUNNER_TEMP/dmg"
+          open "$RUNNER_TEMP/Tuken.app"
+          sleep 20
+          pgrep -fl "Tuken.app/Contents/MacOS/tuken"
+          screencapture -x "$RUNNER_TEMP/tuken-${{ matrix.os }}.png"
+          pkill -f "Tuken.app/Contents/MacOS/tuken" || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: Tuken-macos-screenshot
-          path: ${{ runner.temp }}/tuken-macos.png
-          if-no-files-found: warn
+          name: Tuken-screenshot-${{ matrix.os }}
+          path: ${{ runner.temp }}/tuken-${{ matrix.os }}.png

@@ -23,6 +23,12 @@ pub const TEAM_ID: &str = "Q6L2SF6YDW";
 /// redirects to the current release, e.g.
 /// downloads.claude.ai/releases/darwin/universal/3.6556.2/Claude-<hash>.dmg.
 pub const DMG_URL: &str = "https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect";
+/// Claude Desktop's own macOS update feed (Squirrel.Mac's RELEASES.json), on
+/// Anthropic's download host rather than claude.ai, whose bot check turns
+/// some networks away (GitHub's Macs, data-centre VPNs). Its update, e.g.
+/// `.../3.6556.2/Claude-<hash>.zip`, sits next to the disk image of the same
+/// name, `.../3.6556.2/Claude-<hash>.dmg`.
+pub const FEED_URL: &str = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json";
 /// Code signed by Anthropic: Apple's Developer ID chain, issued to its team.
 pub const SIGNED_BY_ANTHROPIC: &str = concat!(
     "anchor apple generic",
@@ -116,6 +122,19 @@ pub fn from_anthropic(url: &url::Url) -> bool {
         && ["claude.ai", "claude.com", "anthropic.com"]
             .iter()
             .any(|d| host == *d || host.ends_with(&format!(".{d}")))
+}
+
+/// The disk image of the feed's current release.
+pub fn dmg_from_feed(feed: &[u8]) -> Option<url::Url> {
+    let feed: serde_json::Value = serde_json::from_slice(feed).ok()?;
+    let current = feed["currentRelease"].as_str()?;
+    let release = feed["releases"]
+        .as_array()?
+        .iter()
+        .find(|r| r["version"].as_str() == Some(current))?;
+    let zip = release["updateTo"]["url"].as_str()?;
+    let dmg = url::Url::parse(&format!("{}.dmg", zip.strip_suffix(".zip")?)).ok()?;
+    (from_anthropic(&dmg) && dmg.host_str() == Some("downloads.claude.ai")).then_some(dmg)
 }
 
 /// Whole percent of `total`, never more than 100.
@@ -312,7 +331,35 @@ mod system {
         }
     }
 
-    /// Downloads Anthropic's disk image to `to`, following its redirect.
+    /// The current disk image: where claude.ai sends the download button, or
+    /// what the update feed names when claude.ai turns the request away.
+    async fn start(client: &reqwest::Client) -> Result<reqwest::Response, String> {
+        let failed = || "没能下载 Claude Desktop，请检查网络后重试".to_string();
+        let ok = |r: &reqwest::Response| r.status().is_success() && from_anthropic(r.url());
+        match client.get(DMG_URL).send().await {
+            Ok(r) if ok(&r) => return Ok(r),
+            Ok(r) => log::warn!("claude.ai answered {} for the disk image", r.status()),
+            Err(e) => log::warn!("claude.ai unreachable: {e}"),
+        }
+        let mut feed = client.get(FEED_URL).send().await.map_err(|_| failed())?;
+        if !ok(&feed) {
+            return Err(failed());
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = feed.chunk().await.map_err(|_| failed())? {
+            body.extend_from_slice(&chunk);
+            if body.len() > 64 * 1024 {
+                return Err(failed());
+            }
+        }
+        let url = dmg_from_feed(&body).ok_or_else(failed)?;
+        match client.get(url).send().await {
+            Ok(r) if ok(&r) => Ok(r),
+            _ => Err(failed()),
+        }
+    }
+
+    /// Downloads Anthropic's disk image to `to`.
     async fn download(to: &Path, progress: &(impl Fn(Step) + Sync)) -> Result<(), String> {
         let failed = || "没能下载 Claude Desktop，请检查网络后重试".to_string();
         let client = reqwest::Client::builder()
@@ -327,11 +374,7 @@ mod system {
             }))
             .build()
             .map_err(|_| failed())?;
-        let mut r = client.get(DMG_URL).send().await.map_err(|_| failed())?;
-        if !r.status().is_success() || !from_anthropic(r.url()) {
-            log::warn!("Claude Desktop download: {} from {}", r.status(), r.url());
-            return Err(failed());
-        }
+        let mut r = start(&client).await?;
         let total = r.content_length().unwrap_or(0);
         if total > MAX_DMG {
             return Err(failed());
@@ -559,6 +602,27 @@ mod tests {
         assert!(!ok("https://evilclaude.ai/Claude.dmg"));
         assert!(!ok("https://user:pw@downloads.claude.ai/Claude.dmg"));
         assert!(!ok("https://storage.example.com/Claude.dmg"));
+    }
+
+    #[test]
+    fn falls_back_to_the_update_feed() {
+        // downloads.claude.ai's RELEASES.json on 2026-10-25.
+        let feed = br#"{"currentRelease":"3.6556.2","releases":[{"version":"3.6556.2","updateTo":{"name":"Claude 3.6556.2","version":"3.6556.2","pub_date":"2026-10-22T23:07:11.824Z","url":"https://downloads.claude.ai/releases/darwin/universal/3.6556.2/Claude-20c019a1e61fa5b687616af57d31f97bb3181723.zip","notes":""}}]}"#;
+        assert_eq!(
+            dmg_from_feed(feed).unwrap().as_str(),
+            "https://downloads.claude.ai/releases/darwin/universal/3.6556.2/Claude-20c019a1e61fa5b687616af57d31f97bb3181723.dmg"
+        );
+        assert!(from_anthropic(&url::Url::parse(FEED_URL).unwrap()));
+        // Only Anthropic's download host, only a zip next to its disk image.
+        let elsewhere = String::from_utf8_lossy(feed).replace("downloads.claude.ai", "example.com");
+        assert_eq!(dmg_from_feed(elsewhere.as_bytes()), None);
+        let no_zip = String::from_utf8_lossy(feed).replace(".zip", ".tar.gz");
+        assert_eq!(dmg_from_feed(no_zip.as_bytes()), None);
+        assert_eq!(
+            dmg_from_feed(br#"{"currentRelease":"9","releases":[]}"#),
+            None
+        );
+        assert_eq!(dmg_from_feed(b"<html>Just a moment...</html>"), None);
     }
 
     #[test]
