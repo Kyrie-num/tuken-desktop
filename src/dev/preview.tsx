@@ -4,7 +4,8 @@
  * desktop sign-in API; &paid=never to keep an order waiting for payment;
  * &desktop=none for a computer without Claude Desktop, &credit=none for an
  * account without credit (the setup shows until it is finished once);
- * &os=mac for macOS (traffic lights drawn in, vibrancy over a wallpaper).
+ * &os=mac for macOS (traffic lights drawn in, vibrancy over a wallpaper);
+ * &quiet without the first-run guide and reward popups, for screenshots.
  * The body stands in for the desktop wallpaper that Windows 11 Mica shows
  * through the window.
  */
@@ -12,6 +13,11 @@ import { createMock, installMock, type Scenario } from "./mock";
 
 const params = new URLSearchParams(location.search);
 const scenario = (params.get("s") ?? "in") as Scenario;
+if (params.has("quiet")) {
+  for (const k of ["tuken-tour", "tuken-setup"])
+    localStorage.setItem(k, "done");
+  for (const uid of [1, 2]) localStorage.setItem(`tuken-rewards-${uid}`, "999");
+}
 installMock(
   createMock(scenario, {
     nativeAuth: params.get("auth") !== "site",

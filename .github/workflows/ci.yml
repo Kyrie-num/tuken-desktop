@@ -64,6 +64,12 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
           cargo test
+      - name: What claude.ai answers this Mac
+        run: |
+          for ua in "Tuken-Desktop/0.2.0" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"; do
+            echo "== $ua"
+            curl -sS -o /dev/null -D - -A "$ua" https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect               | grep -iE "^(HTTP|location|cf-mitigated|server)" || true
+          done
       - name: Claude Desktop, end to end
         working-directory: src-tauri
         env:
