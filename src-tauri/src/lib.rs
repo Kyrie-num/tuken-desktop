@@ -27,7 +27,7 @@ pub struct Cache {
     catalog: Option<(Instant, Value)>,
     quotes: HashMap<String, (Instant, f64)>,
     plaza: Option<(Instant, Option<Value>)>,
-    /// Whether the server has the desktop sign-in API, and its rules.
+    /// The sign-in rules last fetched, for sign-up's password minimum.
     auth: Option<(Instant, Value)>,
 }
 

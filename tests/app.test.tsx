@@ -172,6 +172,20 @@ describe("兔啃", () => {
     expect(screen.queryByRole("button", { name: /Google/ })).toBeNull();
   });
 
+  it("drops Google as soon as the admin turns it off", async () => {
+    const user = userEvent.setup();
+    const invoke = show("in");
+    await screen.findByText("$28.50");
+    // Turned off in the admin a moment after the app last asked.
+    await invoke("mock:google", { on: false });
+    await user.click(screen.getByRole("button", { name: "账户" }));
+    await user.click(await screen.findByRole("menuitem", { name: /添加账户/ }));
+    await screen.findByRole("dialog", { name: "添加账户" });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /Google/ })).toBeNull(),
+    );
+  });
+
   it("moves a Google sign-in to the browser, or cancels it", async () => {
     const user = userEvent.setup();
     const invoke = show("out", { googleAfter: 60_000 });

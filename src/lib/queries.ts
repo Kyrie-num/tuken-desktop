@@ -139,7 +139,7 @@ export function useAuthConfig() {
   return useQuery({
     queryKey: qk.authConfig,
     queryFn: () => tuken<AuthConfig>("auth_config"),
-    staleTime: 5 * 60_000,
+    staleTime: 30_000,
     refetchInterval: (q) => (q.state.data?.available ? false : 60_000),
   });
 }

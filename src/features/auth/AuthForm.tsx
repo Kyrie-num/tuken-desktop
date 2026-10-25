@@ -118,6 +118,11 @@ export function AuthForm({
 
   useEffect(() => onError?.(!!error), [error, onError]);
 
+  // The admin may have just changed what sign-in offers (Google, sign-up).
+  useEffect(() => {
+    void client.invalidateQueries({ queryKey: qk.authConfig });
+  }, [client]);
+
   useEffect(() => {
     if (cooldown <= 0) return;
     const t = window.setTimeout(() => setCooldown((c) => c - 1), 1000);

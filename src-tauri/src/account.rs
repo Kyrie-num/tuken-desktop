@@ -574,10 +574,9 @@ async fn auth_action(
             .map(|(_, data)| data.clone())
     };
     match action {
+        // Always asked afresh: a switch turned in the admin (Google, sign-up)
+        // shows the next time a sign-in form opens.
         "auth_config" => {
-            if let Some(data) = cached() {
-                return Ok(data);
-            }
             // Until the server has the desktop sign-in API, sign-in uses the site.
             let (config, public) =
                 tokio::join!(api::auth(Method::GET, "/config", None), public_settings());

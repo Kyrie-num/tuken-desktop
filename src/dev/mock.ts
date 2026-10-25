@@ -662,6 +662,9 @@ export function createMock(
       case "desktop_status":
         await wait(Math.min(delay, 120));
         return JSON.parse(JSON.stringify(db.desktop));
+      case "mock:google":
+        google = args?.on === true;
+        return null;
       case "mock:publish":
         db.notices.unshift({
           id: db.notices.length + 10,
