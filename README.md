@@ -14,6 +14,12 @@
 - 安装包还没有代码签名，Windows 可能会提示「Windows 已保护你的电脑」：点「更多信息」，再点「仍要运行」。
 - 有新版本时兔啃会提示，点一下就能更新。
 
+也可以在 PowerShell 里运行下面这行，自动下载最新版并打开安装程序：
+
+```powershell
+irm https://raw.githubusercontent.com/Kyrie-num/tuken-desktop/main/install.ps1 | iex
+```
+
 ## 能做什么
 
 - 用邮箱登录、注册，多个账户随时切换。
