@@ -674,9 +674,12 @@ mod tests {
             .status()
             .unwrap();
         assert!(signed.success());
+        // Its own report would read as a failure in the log; only its exit counts.
         let mut child = Command::new(&update)
             .args(["--exact", "vault::tests::macos_keychain_read", "--ignored"])
             .env("TUKEN_KEYCHAIN_READ", &service)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .spawn()
             .unwrap();
         let started = Instant::now();
