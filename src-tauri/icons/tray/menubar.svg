@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="15.5 2 184 184" width="36" height="36">
+  <!-- The macOS menu bar icon: 兔啃's mini cut as a template image (black and
+       clear only; macOS tints it). Eyes are holes, the carrot sits in a gap.
+       Render: resvg -w 36 -h 36 menubar.svg menubar@2x.png -->
+  <defs>
+    <path id="carrot" d="M118 130C130 136 132 148 122 154L66 176C60 178 56 172 60 168L104 134C108 130 113 128 118 130Z"/>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
+      <rect width="200" height="200" fill="#fff"/>
+      <circle cx="82" cy="106" r="10.5" fill="#000"/>
+      <circle cx="118" cy="106" r="10.5" fill="#000"/>
+      <use href="#carrot" fill="#000" stroke="#000" stroke-width="28" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <g mask="url(#cut)" fill="#000" stroke="#000" stroke-width="12" stroke-linejoin="round">
+    <path d="M79 78C70 48 72 18 85 16C98 16 97 48 93 76"/>
+    <path d="M110 76C120 54 146 45 162 51C171 55 165 66 152 66C138 66 127 73 121 82"/>
+    <path d="M52 150C44 116 58 72 100 70C142 72 156 116 148 150C145 166 128 172 100 172C72 172 55 166 52 150Z"/>
+  </g>
+  <use href="#carrot" fill="#000" stroke="#000" stroke-width="10" stroke-linejoin="round"/>
+</svg>

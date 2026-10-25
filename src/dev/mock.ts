@@ -42,6 +42,8 @@ export function createMock(
     inviteOnly = false,
     /** Daily check-in: on, off in the admin, or not on the server yet. */
     checkin = "on" as "on" | "off" | "none",
+    /** The system the app runs on. */
+    platform = "windows" as "windows" | "macos",
   } = {},
 ) {
   const wait = (ms = delay) =>
@@ -661,7 +663,9 @@ export function createMock(
       case "desktop_install":
         await wait(delay * 6);
         db.desktop.installed = true;
-        return { method: "winget" };
+        return { method: platform === "macos" ? "dmg" : "winget" };
+      case "platform":
+        return platform;
       case "desktop_open":
       case "quit":
       case "panel_show":
@@ -669,7 +673,7 @@ export function createMock(
         return null;
       case "backdrop":
       case "set_backdrop_theme":
-        return "mica";
+        return platform === "macos" ? "vibrancy" : "mica";
       case "plugin:window|is_maximized":
         return false;
       case "plugin:event|listen":

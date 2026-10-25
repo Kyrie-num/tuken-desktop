@@ -18,8 +18,11 @@ import {
   type Scenario,
 } from "@/dev/mock";
 import { rewardsSeen } from "@/features/rewards/RewardNotice";
+import { installText } from "@/lib/install";
 import { persistCache, restoreCache } from "@/lib/persist";
+import { loadPlatform } from "@/lib/platform";
 import { qk, queryClient } from "@/lib/queries";
+import { applyTheme } from "@/lib/theme";
 
 function show(scenario: Scenario, opts: Parameters<typeof createMock>[1] = {}) {
   const invoke = vi.fn(createMock(scenario, { delay: 0, ...opts }));
@@ -805,6 +808,85 @@ describe("兔啃", () => {
     restoreCache(queryClient);
     expect(queryClient.getQueryData(qk.profile(1))).toMatchObject({
       balance: 9.5,
+    });
+  });
+
+  it("draws its own window buttons on Windows", async () => {
+    show("in", { noDesktop: true });
+    expect(await screen.findByText("$28.50")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "最小化" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeInTheDocument();
+    expect(screen.queryByTestId("traffic-lights")).toBeNull();
+    expect(
+      screen.getByText("从 Anthropic 官方下载，安装包由 winget 校验"),
+    ).toBeInTheDocument();
+  });
+
+  it("asks the native side which system it runs on", async () => {
+    installMock(createMock("out", { platform: "macos" }));
+    expect(await loadPlatform()).toBe("macos");
+    installMock(async () => "plan9");
+    expect(await loadPlatform()).toBe("windows");
+    installMock(async () => {
+      throw "no native side";
+    });
+    expect(await loadPlatform()).toBe("windows");
+  });
+
+  it("says in a few words where an install of Claude Desktop is", () => {
+    expect(installText(null)).toBeNull();
+    expect(installText({ step: "download", percent: 0 })).toBe("正在下载");
+    expect(installText({ step: "download", percent: 42 })).toBe("正在下载 42%");
+    expect(installText({ step: "verify" })).toBe("正在检查安装包的签名");
+    expect(installText({ step: "copy" })).toBe("正在装进「应用程序」");
+  });
+
+  describe("on macOS", () => {
+    beforeEach(() => {
+      document.documentElement.dataset.platform = "macos";
+    });
+    afterEach(() => {
+      delete document.documentElement.dataset.platform;
+      document.documentElement.classList.remove("dark");
+    });
+
+    it("leaves the window buttons to macOS and makes room for them", async () => {
+      show("in", { platform: "macos" });
+      expect(await screen.findByText("$28.50")).toBeInTheDocument();
+      expect(screen.getByTestId("traffic-lights")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "最小化" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "关闭" })).toBeNull();
+    });
+
+    it("installs Claude Desktop from its disk image, signature checked", async () => {
+      const user = userEvent.setup();
+      const invoke = show("in", { platform: "macos", noDesktop: true });
+      expect(
+        await screen.findByText("从 Anthropic 官方下载，安装前检查签名"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/winget/)).toBeNull();
+      await user.click(screen.getByRole("button", { name: "一键安装" }));
+      expect(
+        await screen.findByText("Claude Desktop 安装好了"),
+      ).toBeInTheDocument();
+      expect(invoke.mock.calls.some(([cmd]) => cmd === "desktop_install")).toBe(
+        true,
+      );
+    });
+
+    it("lets the window follow the system look while the app does", () => {
+      const invoke = vi.fn(createMock("out", { platform: "macos" }));
+      installMock(invoke);
+      const sent = () =>
+        invoke.mock.calls
+          .filter(([cmd]) => cmd === "set_backdrop_theme")
+          .map(([, args]) => args);
+      applyTheme("system");
+      applyTheme("dark");
+      expect(sent()).toEqual([
+        { dark: false, system: true },
+        { dark: true, system: false },
+      ]);
     });
   });
 });

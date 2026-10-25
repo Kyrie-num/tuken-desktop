@@ -14,6 +14,8 @@ import { Segmented } from "@/components/Segmented";
 import { desktop, EFFORTS, tuken, type Effort, type Key } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { usd } from "@/lib/format";
+import { installText, useInstallStep } from "@/lib/install";
+import { isMac } from "@/lib/platform";
 import { byStrength, modelInfo } from "@/lib/models";
 import {
   fetchers,
@@ -176,6 +178,9 @@ export function Setup() {
     "idle" | "busy" | "browser" | "failed"
   >("idle");
   const [installError, setInstallError] = useState("");
+  const progress = installText(
+    useInstallStep(install === "busy" || !!status?.installing),
+  );
   async function runInstall() {
     setInstall("busy");
     try {
@@ -314,7 +319,7 @@ export function Setup() {
               className="flex items-center gap-2 text-small text-ink/60"
             >
               <Loader2 size={15} className="animate-spin" />
-              通常 1 到 3 分钟，装好会自动继续
+              {progress ?? "通常 1 到 3 分钟"}，装好会自动继续
             </p>
           }
         />
@@ -335,7 +340,9 @@ export function Setup() {
             </>
           }
         >
-          已经打开 Claude 官网的下载页，装好后这里会自动继续。
+          {isMac()
+            ? "已经打开 Claude 官网的下载页。下载后打开它，把 Claude 拖进「应用程序」，这里会自动继续。"
+            : "已经打开 Claude 官网的下载页，装好后这里会自动继续。"}
         </Page>
       ) : install === "failed" ? (
         <Page

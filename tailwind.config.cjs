@@ -14,23 +14,10 @@ module.exports = {
         glass: "rgb(var(--glass) / <alpha-value>)",
         base: "rgb(var(--base) / <alpha-value>)",
       },
+      // Per system, in src/styles/index.css (--font-sans, --font-display).
       fontFamily: {
-        sans: [
-          "Segoe UI Variable Text",
-          "Segoe UI",
-          "Microsoft YaHei UI",
-          "PingFang SC",
-          "system-ui",
-          "sans-serif",
-        ],
-        display: [
-          "Segoe UI Variable Display",
-          "Segoe UI",
-          "Microsoft YaHei UI",
-          "PingFang SC",
-          "system-ui",
-          "sans-serif",
-        ],
+        sans: ["var(--font-sans)"],
+        display: ["var(--font-display)"],
       },
       fontSize: {
         caption: ["12px", "18px"],

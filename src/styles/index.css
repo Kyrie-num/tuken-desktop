@@ -19,6 +19,20 @@
   --base: 233 243 242;
   --rim: 255 255 255;
   --shade: 0 44 48;
+  /* Each system's own UI font, with a Chinese face of the same weight. */
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC",
+    system-ui, sans-serif;
+  --font-display:
+    "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI",
+    "PingFang SC", system-ui, sans-serif;
+}
+
+html[data-platform="macos"] {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    system-ui, sans-serif;
+  --font-display: var(--font-sans);
 }
 
 .dark {
@@ -52,9 +66,14 @@ body {
   cursor: default;
 }
 
-/* Without Windows 11 Mica the page paints its own base. */
-html:not([data-backdrop="mica"]) body {
+/* Without Windows 11 Mica or macOS vibrancy the page paints its own base. */
+html:not([data-backdrop="mica"]):not([data-backdrop="vibrancy"]) body {
   background: rgb(var(--base));
+}
+/* Vibrancy shows more of the desktop than Mica does: a wash of the base keeps
+   the window mint (or deep teal) like on Windows. */
+html[data-backdrop="vibrancy"] body {
+  background: rgb(var(--base) / 0.5);
 }
 
 input,
@@ -76,20 +95,21 @@ button {
   background: rgb(var(--cyan) / 0.3);
 }
 
-/* Thin, quiet scrollbars that sit on glass. */
-::-webkit-scrollbar {
+/* Thin, quiet scrollbars that sit on glass. macOS keeps its own, which only
+   show while scrolling (styling them would make them stay). */
+html:not([data-platform="macos"]) ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
-::-webkit-scrollbar-thumb {
+html:not([data-platform="macos"]) ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 999px;
   background: rgb(var(--ink) / 0.18) padding-box;
 }
-::-webkit-scrollbar-thumb:hover {
+html:not([data-platform="macos"]) ::-webkit-scrollbar-thumb:hover {
   background: rgb(var(--ink) / 0.3) padding-box;
 }
-::-webkit-scrollbar-track {
+html:not([data-platform="macos"]) ::-webkit-scrollbar-track {
   background: transparent;
 }
 
@@ -146,7 +166,8 @@ button {
 .dark .backdrop .f3 {
   background: radial-gradient(circle, rgb(43 183 179 / 0.18), transparent 70%);
 }
-html[data-backdrop="mica"] .backdrop .field {
+html[data-backdrop="mica"] .backdrop .field,
+html[data-backdrop="vibrancy"] .backdrop .field {
   opacity: 0.7;
 }
 
@@ -228,6 +249,14 @@ html[data-backdrop="mica"] .backdrop .field {
   .glass-lens {
     backdrop-filter: blur(24px) saturate(180%);
     backdrop-filter: url(#tuken-refract) blur(3px) saturate(190%);
+  }
+  /* WebKit (macOS) can't filter a backdrop through SVG, but it can filter the
+     colour drops under the lens themselves: the same bend. */
+  html[data-platform="macos"] .glass-lens {
+    backdrop-filter: blur(3px) saturate(190%);
+  }
+  html[data-platform="macos"] .lens-drops {
+    filter: url(#tuken-refract);
   }
 
   /* ---------------------------------------------------------------- buttons */
@@ -357,6 +386,19 @@ html[data-backdrop="mica"] .backdrop .field {
   }
   .field::placeholder {
     color: rgb(var(--ink) / 0.42);
+  }
+  /* WebKit draws its own Aqua pop-up button for a select; this one is glass
+     with a small chevron, like on Windows. */
+  html[data-platform="macos"] select.field {
+    appearance: none;
+    padding-right: 1.75rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23003F43' stroke-opacity='.6' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 10px 6px;
+  }
+  html.dark[data-platform="macos"] select.field {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23E2F2F0' stroke-opacity='.6' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
   .field:focus {
     outline: none;

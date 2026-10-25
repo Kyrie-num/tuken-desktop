@@ -15,7 +15,9 @@ tauri-build = { version = "2.4.0", features = [] }
 
 [dependencies]
 # unstable: pages shown inside the main window (src/panel.rs) need child webviews.
-tauri = { version = "2.8.2", features = ["tray-icon", "image-png", "unstable"] }
+# macos-private-api: the see-through window behind macOS vibrancy (does
+# nothing elsewhere).
+tauri = { version = "2.8.2", features = ["tray-icon", "image-png", "unstable", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 # ~2.12: later versions need Tauri 2.12. Rustls like the rest of the app; the
@@ -34,6 +36,19 @@ sha2 = "0.10"
 uuid = { version = "1.11", features = ["v4"] }
 dirs = "5.0"
 tempfile = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The vault's key in the login keychain, sealed with AES-256-GCM. Tauri and
+# rustls already build all four for macOS.
+security-framework = "3"
+ring = "0.17"
+libc = "0.2"
+plist = "1"
+
+[dev-dependencies]
+# The macOS vault format and Claude.app's Info.plist are tested everywhere.
+ring = "0.17"
+plist = "1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

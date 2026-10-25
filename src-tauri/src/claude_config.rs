@@ -65,6 +65,7 @@ pub struct Paths {
 impl Paths {
     /// The real locations under %LOCALAPPDATA% and the home directory. A
     /// sandboxed dev run redirects both (LOCALAPPDATA and TUKEN_HOME).
+    #[cfg(not(target_os = "macos"))]
     pub fn system(backups: PathBuf) -> Result<Paths, String> {
         let local = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
@@ -76,10 +77,63 @@ impl Paths {
         Ok(Self::under(&local, &home, backups))
     }
 
+    /// The real locations under the home directory; TUKEN_HOME redirects
+    /// them all for a sandboxed dev run.
+    #[cfg(target_os = "macos")]
+    pub fn system(backups: PathBuf) -> Result<Paths, String> {
+        let home = std::env::var_os("TUKEN_HOME")
+            .map(PathBuf::from)
+            .or_else(dirs::home_dir)
+            .ok_or("找不到用户目录")?;
+        Ok(Self::mac(&home, backups))
+    }
+
+    /// Windows: Claude Desktop's folders under %LOCALAPPDATA%.
+    #[cfg(any(not(target_os = "macos"), test))]
     pub fn under(local_app_data: &Path, home: &Path, backups: PathBuf) -> Paths {
-        let threep = local_app_data.join("Claude-3p");
+        Self::new(
+            &local_app_data.join("Claude"),
+            &local_app_data.join("Claude-3p"),
+            home,
+            backups,
+        )
+    }
+
+    /// macOS: Claude Desktop is an Electron app named "Claude", so its data
+    /// folder is `app.getPath("userData")`, ~/Library/Application Support/Claude.
+    /// For a third-party gateway it switches to that path plus "-3p". From
+    /// Claude Desktop's own code (app.asar of 2.42304 on Windows and of
+    /// 3.6556.2 for macOS, `.vite/build/index.pre.js`):
+    ///
+    /// ```js
+    /// var KQ="-3p", qQ="Claude", ZQ=`${qQ}${KQ}`, QQ="claude_desktop_config.json";
+    /// function $Q(){ if(process.env.CLAUDE_USER_DATA_DIR) return E.app.getPath("userData");
+    ///   if(process.platform==="win32"&&process.env.LOCALAPPDATA) return h.join(process.env.LOCALAPPDATA,ZQ);
+    ///   let e=E.app.getPath("userData"); return e.endsWith(KQ)?e:`${e}${KQ}` }
+    /// function c$(){ return h.join($Q(),QQ) }              // read for "deploymentMode"
+    /// function u$(){ return h.join($Q(),"configLibrary") } // <appliedId>.json, _meta.json
+    /// ```
+    ///
+    /// and the plain folder is `[n.join(a.app.getPath("appData"),"Claude")]`
+    /// off Windows. Managed settings come only from MDM profiles
+    /// (`/Library/Managed Preferences/[<user>/]com.anthropic.claudefordesktop.plist`),
+    /// not from `defaults`, so 兔啃 writes the same files as on Windows.
+    #[cfg(any(target_os = "macos", test))]
+    pub fn mac(home: &Path, backups: PathBuf) -> Paths {
+        let support = home.join("Library").join("Application Support");
+        Self::new(
+            &support.join("Claude"),
+            &support.join("Claude-3p"),
+            home,
+            backups,
+        )
+    }
+
+    /// `claude`: Claude Desktop's own data folder; `threep`: the one it uses
+    /// for a third-party gateway.
+    fn new(claude: &Path, threep: &Path, home: &Path, backups: PathBuf) -> Paths {
         Paths {
-            normal_config: local_app_data.join("Claude").join(CONFIG),
+            normal_config: claude.join(CONFIG),
             threep_config: threep.join(CONFIG),
             library: threep.join("configLibrary"),
             cli_settings: home.join(".claude").join("settings.json"),
@@ -563,6 +617,38 @@ mod tests {
     fn put(path: &Path, text: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn macos_files_are_where_claude_desktop_reads_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("Users").join("xiaoming");
+        let p = Paths::mac(&home, dir.path().join("backups"));
+        let support = home.join("Library").join("Application Support");
+        let library = support.join("Claude-3p").join("configLibrary");
+        assert_eq!(p.normal_config, support.join("Claude").join(CONFIG));
+        assert_eq!(p.threep_config, support.join("Claude-3p").join(CONFIG));
+        assert_eq!(p.meta(), library.join("_meta.json"));
+        assert_eq!(
+            p.profile(PROFILE_ID),
+            library.join(format!("{PROFILE_ID}.json"))
+        );
+        assert_eq!(p.cli_settings, home.join(".claude").join("settings.json"));
+
+        connect_desktop(&p, "sk-mac").unwrap();
+        assert_eq!(read(&p.threep_config)["deploymentMode"], "3p");
+        assert_eq!(read(&p.meta())["appliedId"], PROFILE_ID);
+        assert_eq!(desktop_key(&p).as_deref(), Some("sk-mac"));
+    }
+
+    /// Claude Desktop only applies a library file whose id matches
+    /// `/^[a-f0-9-]{36}$/` (its `appliedId` check).
+    #[test]
+    fn our_profile_id_is_one_claude_desktop_applies() {
+        assert_eq!(PROFILE_ID.len(), 36);
+        assert!(PROFILE_ID
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-'));
     }
 
     #[test]

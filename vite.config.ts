@@ -9,7 +9,9 @@ export default defineConfig(({ command }) => ({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    target: "chrome120",
+    // WebView2 on Windows; WKWebView (Safari 16, macOS 13) on macOS.
+    target:
+      process.env.TAURI_ENV_PLATFORM === "darwin" ? "safari16" : "chrome120",
   },
   server: {
     port: 5280,

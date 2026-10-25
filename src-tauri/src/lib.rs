@@ -6,6 +6,8 @@ mod api;
 mod cashier;
 mod claude_config;
 mod desktop;
+#[cfg(any(target_os = "macos", test))]
+mod desktop_mac;
 mod google;
 mod panel;
 mod shop;
@@ -37,9 +39,12 @@ pub struct State {
     /// One order sync at a time, without blocking the vault for the UI.
     sync: tokio::sync::Mutex<()>,
     vault_path: PathBuf,
+    /// The app's identifier: on macOS it names the vault's keychain item.
+    app_id: String,
     backups: PathBuf,
     cache: std::sync::Mutex<Cache>,
-    /// The window material in use: "mica", or "none" before Windows 11.
+    /// The window material in use: "mica" (Windows 11), "vibrancy" (macOS),
+    /// or "none".
     backdrop: std::sync::Mutex<&'static str>,
     /// Whether the app shows its dark theme, for the windows it opens.
     dark: std::sync::atomic::AtomicBool,
@@ -52,11 +57,12 @@ pub struct State {
 }
 
 impl State {
-    fn new(dir: PathBuf) -> State {
+    fn new(dir: PathBuf, app_id: String) -> State {
         State {
             vault: tokio::sync::Mutex::new(None),
             sync: tokio::sync::Mutex::new(()),
             vault_path: dir.join("tuken.vault"),
+            app_id,
             backups: dir.join("backups"),
             cache: std::sync::Mutex::new(Cache::default()),
             backdrop: std::sync::Mutex::new("none"),
@@ -70,7 +76,7 @@ impl State {
     pub async fn vault(&self) -> Result<tokio::sync::MappedMutexGuard<'_, Vault>, String> {
         let mut guard = self.vault.lock().await;
         if guard.is_none() {
-            *guard = Some(vault::load(&self.vault_path)?);
+            *guard = Some(vault::load(&self.vault_path, &self.app_id)?);
         }
         Ok(tokio::sync::MutexGuard::map(guard, |v| {
             v.as_mut().expect("loaded above")
@@ -78,7 +84,7 @@ impl State {
     }
 
     pub fn save(&self, v: &Vault) -> Result<(), String> {
-        vault::save(&self.vault_path, v)
+        vault::save(&self.vault_path, &self.app_id, v)
     }
 
     pub async fn current(&self) -> Result<Account, String> {
@@ -144,13 +150,16 @@ fn supports_mica() -> bool {
         .is_some_and(|b| b >= 22000)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn supports_mica() -> bool {
     false
 }
 
-fn apply_backdrop(app: &AppHandle, dark: Option<bool>) -> &'static str {
+/// `system`: the app follows the system's light or dark look (macOS only).
+#[cfg(not(target_os = "macos"))]
+fn apply_backdrop(app: &AppHandle, dark: Option<bool>, system: bool) -> &'static str {
     use tauri::window::{Effect, EffectsBuilder};
+    let _ = system;
     let Some(w) = app.get_webview_window("main") else {
         return "none";
     };
@@ -168,6 +177,25 @@ fn apply_backdrop(app: &AppHandle, dark: Option<bool>) -> &'static str {
     }
 }
 
+/// macOS: the window's vibrancy is set up in tauri.macos.conf.json
+/// (`windowEffects`). Its material follows the window's appearance, so the
+/// window takes the app's theme, or the system's while the app follows it.
+#[cfg(target_os = "macos")]
+fn apply_backdrop(app: &AppHandle, dark: Option<bool>, system: bool) -> &'static str {
+    let Some(w) = app.get_webview_window("main") else {
+        return "none";
+    };
+    if let Some(dark) = dark {
+        let theme = (!system).then_some(if dark {
+            tauri::Theme::Dark
+        } else {
+            tauri::Theme::Light
+        });
+        let _ = w.set_theme(theme);
+    }
+    "vibrancy"
+}
+
 /// The window material, so the page knows whether to paint its own background.
 #[tauri::command]
 fn backdrop(app: AppHandle, state: tauri::State<'_, State>) -> &'static str {
@@ -175,13 +203,30 @@ fn backdrop(app: AppHandle, state: tauri::State<'_, State>) -> &'static str {
     *state.backdrop.lock().unwrap()
 }
 
-/// Matches Mica's tint to the app's light or dark theme.
+/// Matches the window material's tint to the app's light or dark theme.
 #[tauri::command]
-fn set_backdrop_theme(app: AppHandle, state: tauri::State<'_, State>, dark: bool) -> &'static str {
-    let used = apply_backdrop(&app, Some(dark));
+fn set_backdrop_theme(
+    app: AppHandle,
+    state: tauri::State<'_, State>,
+    dark: bool,
+    system: Option<bool>,
+) -> &'static str {
+    let used = apply_backdrop(&app, Some(dark), system.unwrap_or(false));
     *state.backdrop.lock().unwrap() = used;
     state.dark.store(dark, std::sync::atomic::Ordering::SeqCst);
     used
+}
+
+/// The system 兔啃 runs on, for what the page draws around the window.
+#[tauri::command]
+fn platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        "linux"
+    }
 }
 
 /// Quits for real; closing the window only hides it to the tray.
@@ -197,7 +242,9 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip("兔啃")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        // A menu bar item opens its menu when clicked on macOS; on Windows a
+        // click opens 兔啃 and the menu waits for a right click.
+        .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main(app),
             "quit" => app.exit(0),
@@ -210,9 +257,22 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
                 ..
             } = event
             {
-                show_main(tray.app_handle());
+                if !cfg!(target_os = "macos") {
+                    show_main(tray.app_handle());
+                }
             }
         });
+    // macOS: a black-and-clear template image that the menu bar tints itself,
+    // 18 pt tall, drawn at 2x.
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray
+            .icon(tauri::image::Image::from_bytes(include_bytes!(
+                "../icons/tray/menubar@2x.png"
+            ))?)
+            .icon_as_template(true);
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
@@ -220,8 +280,65 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The macOS menu bar, in Chinese like the rest of 兔啃: it also gives text
+/// fields their ⌘C, ⌘V, ⌘X, ⌘A and ⌘Z, and ⌘Q quits.
+#[cfg(target_os = "macos")]
+fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    use tauri::menu::{AboutMetadata, PredefinedMenuItem as Item, Submenu, WINDOW_SUBMENU_ID};
+    let about = AboutMetadata {
+        name: Some("兔啃".into()),
+        version: Some(app.package_info().version.to_string()),
+        ..Default::default()
+    };
+    let tuken = Submenu::with_items(
+        app,
+        "兔啃",
+        true,
+        &[
+            &Item::about(app, Some("关于兔啃"), Some(about))?,
+            &Item::separator(app)?,
+            &Item::services(app, Some("服务"))?,
+            &Item::separator(app)?,
+            &Item::hide(app, Some("隐藏兔啃"))?,
+            &Item::hide_others(app, Some("隐藏其他"))?,
+            &Item::show_all(app, Some("全部显示"))?,
+            &Item::separator(app)?,
+            &Item::quit(app, Some("退出兔啃"))?,
+        ],
+    )?;
+    let edit = Submenu::with_items(
+        app,
+        "编辑",
+        true,
+        &[
+            &Item::undo(app, Some("撤销"))?,
+            &Item::redo(app, Some("重做"))?,
+            &Item::separator(app)?,
+            &Item::cut(app, Some("剪切"))?,
+            &Item::copy(app, Some("拷贝"))?,
+            &Item::paste(app, Some("粘贴"))?,
+            &Item::select_all(app, Some("全选"))?,
+        ],
+    )?;
+    // Tauri makes this id the Window menu, where macOS lists the windows.
+    let window = Submenu::with_id_and_items(
+        app,
+        WINDOW_SUBMENU_ID,
+        "窗口",
+        true,
+        &[
+            &Item::minimize(app, Some("最小化"))?,
+            &Item::maximize(app, Some("缩放"))?,
+            &Item::separator(app)?,
+            // Closing hides the window; 兔啃 keeps finishing paid orders.
+            &Item::close_window(app, Some("关闭窗口"))?,
+        ],
+    )?;
+    Menu::with_items(app, &[&tuken, &edit, &window])
+}
+
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_main(app)
         }))
@@ -243,8 +360,9 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
-            // Closing the main window keeps 兔啃 in the tray, where it finishes
-            // paid orders; the tray menu quits.
+            // Closing the main window keeps 兔啃 in the tray (the menu bar and
+            // the Dock on macOS), where it finishes paid orders; the tray
+            // menu quits, and so does ⌘Q.
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -257,8 +375,8 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .map_err(|_| "找不到应用数据目录")?;
-            app.manage(State::new(dir));
-            let used = apply_backdrop(app.handle(), None);
+            app.manage(State::new(dir, app.config().identifier.clone()));
+            let used = apply_backdrop(app.handle(), None, false);
             *app.state::<State>().backdrop.lock().unwrap() = used;
             create_tray(app)?;
             shop::start_worker(app.handle().clone());
@@ -273,6 +391,7 @@ pub fn run() {
                 desktop::desktop_models,
                 backdrop,
                 set_backdrop_theme,
+                platform,
                 quit,
                 panel::panel_show,
                 panel::panel_hide,
@@ -288,7 +407,18 @@ pub fn run() {
                 }
                 handler(invoke)
             }
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running 兔啃");
+        });
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu);
+    builder
+        .build(tauri::generate_context!())
+        .expect("error while running 兔啃")
+        .run(|app, event| {
+            // Clicking 兔啃 in the Dock brings back its closed window.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_main(app);
+            }
+            let _ = (app, event);
+        });
 }

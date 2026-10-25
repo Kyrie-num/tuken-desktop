@@ -1,8 +1,11 @@
+import { useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Segmented } from "@/components/Segmented";
 import { WindowControls } from "@/components/WindowControls";
 import { AccountMenu } from "@/features/account/AccountMenu";
 import { NoticeBell } from "@/features/notice/Notices";
 import { useSession, useUi, type Page } from "@/app/context";
+import { isMac } from "@/lib/platform";
 import icon from "@/assets/brand/tuken-icon-mini.svg";
 import wordmark from "@/assets/brand/tuken-wordmark.svg";
 
@@ -12,16 +15,57 @@ const PAGES = [
   ["models", "模型"],
 ] as const satisfies readonly (readonly [Page, string])[];
 
-/** The floating title bar: brand, page capsule, account and window buttons. */
+/** Whether the window fills the screen, where macOS hides the traffic lights. */
+function useFullscreen(watch: boolean) {
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    if (!watch) return;
+    let w: ReturnType<typeof getCurrentWindow>;
+    try {
+      w = getCurrentWindow();
+    } catch {
+      return; // Not inside the app window (tests, a plain browser).
+    }
+    let stop: (() => void) | undefined;
+    const sync = () =>
+      void w
+        .isFullscreen()
+        .then(setFull)
+        .catch(() => {});
+    sync();
+    void w
+      .onResized(sync)
+      .then((u) => (stop = u))
+      .catch(() => {});
+    return () => stop?.();
+  }, [watch]);
+  return full;
+}
+
+/**
+ * The floating title bar: brand, page capsule, account and window buttons.
+ * On macOS the system draws the window buttons (the traffic lights) at its
+ * left, so the brand moves over and 兔啃 draws none of its own.
+ */
 export function Toolbar() {
   const { uid } = useSession();
   const { page, go, setup } = useUi();
+  const mac = isMac();
+  const fullscreen = useFullscreen(mac);
   return (
     <header
       data-tauri-drag-region
       className="relative z-20 grid h-[64px] shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 px-4"
     >
       <div data-tauri-drag-region className="flex items-center gap-2 pl-1">
+        {mac && !fullscreen && (
+          <span
+            data-tauri-drag-region
+            data-testid="traffic-lights"
+            aria-hidden="true"
+            className="w-16 shrink-0 self-stretch"
+          />
+        )}
         <img
           src={icon}
           alt=""
@@ -54,7 +98,7 @@ export function Toolbar() {
       >
         {uid && <NoticeBell />}
         {uid && <AccountMenu />}
-        <WindowControls />
+        {!mac && <WindowControls />}
       </div>
     </header>
   );
