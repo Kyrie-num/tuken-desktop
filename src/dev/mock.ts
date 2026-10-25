@@ -13,6 +13,7 @@ const beijingDay = (n: number) =>
 
 const hoursAgo = (h: number) =>
   new Date(Date.now() - h * 3600_000).toISOString();
+const LONG_AGO = "2026-09-01T08:00:00Z";
 
 /** The mock's sign-in: this password for every account, these codes. */
 export const MOCK_PASSWORD = "tuken-demo";
@@ -44,6 +45,8 @@ export function createMock(
     checkin = "on" as "on" | "off" | "none",
     /** The system the app runs on. */
     platform = "windows" as "windows" | "macos",
+    /** The first account was made long ago, not just now. */
+    oldAccount = false,
   } = {},
 ) {
   const wait = (ms = delay) =>
@@ -54,8 +57,16 @@ export function createMock(
       email: "xiaoming@mail.sustech.edu.cn",
       username: "小明",
       balance: noCredit ? 0 : 28.5,
+      // Signed up just now (the bonus below), unless it is an old account.
+      created_at: oldAccount ? LONG_AGO : hoursAgo(0.2),
     },
-    { user_id: 2, email: "lab-share@example.test", username: "", balance: 3.2 },
+    {
+      user_id: 2,
+      email: "lab-share@example.test",
+      username: "",
+      balance: 3.2,
+      created_at: LONG_AGO,
+    },
   ];
   /** Accounts the server knows; the second one has two-step sign-in on. */
   const known = accounts.slice();
@@ -340,6 +351,7 @@ export function createMock(
             email: e,
             username: "",
             balance: 0,
+            created_at: new Date().toISOString(),
           };
           known.push(a);
         }
@@ -487,7 +499,7 @@ export function createMock(
           frozen_balance: 0,
           total_recharged: 50,
           concurrency: 4,
-          created_at: "2026-09-01T08:00:00Z",
+          created_at: a.created_at,
         };
       case "dashboard":
         return {

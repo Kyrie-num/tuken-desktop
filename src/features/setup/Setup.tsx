@@ -28,6 +28,7 @@ import {
   claudeModel,
   effortNames,
   recommended,
+  recommendedEffort,
 } from "@/features/home/ModelSheet";
 import { message, useSession, useUi } from "@/app/context";
 
@@ -241,8 +242,9 @@ export function Setup() {
 
   const ids = prep && "ids" in prep ? prep.ids : [];
   const [pick, setPick] = useState<string | null>(null);
-  const [effort, setEffort] = useState<Effort>("max");
-  const chosen = pick && ids.includes(pick) ? pick : recommended(ids);
+  const [effort, setEffort] = useState<Effort>(recommendedEffort);
+  const suggested = recommended(ids);
+  const chosen = pick && ids.includes(pick) ? pick : suggested;
 
   const [configuring, setConfiguring] = useState(false);
   const [configError, setConfigError] = useState("");
@@ -473,7 +475,9 @@ export function Setup() {
                   const m = modelInfo(id);
                   return (
                     <option key={id} value={id}>
-                      {m.note ? `${m.name} · ${m.note}` : m.name}
+                      {[m.name, m.note, id === suggested && "推荐"]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </option>
                   );
                 })}
@@ -492,6 +496,7 @@ export function Setup() {
               size="sm"
               value={effort}
               options={EFFORTS.map((e) => [e, effortNames[e]] as const)}
+              badge={[recommendedEffort, "推荐"]}
               onChange={setEffort}
             />
           </div>

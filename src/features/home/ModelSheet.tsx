@@ -18,6 +18,9 @@ export const effortNames: Record<Effort, string> = {
   max: "最高",
 };
 
+/** The effort 兔啃 starts with and recommends: the deepest thinking. */
+export const recommendedEffort: Effort = "max";
+
 /** Model ids Claude Desktop lists on a gateway; the native side checks too. */
 export const claudeModel = (id: string) =>
   id.length <= 100 && /^(anthropic\/)?claude-[a-z0-9.-]+$/i.test(id);
@@ -69,7 +72,7 @@ export function ModelSheet() {
     [fetched.data],
   );
   const [model, setModel] = useState<string | null>(null);
-  const [effort, setEffort] = useState<Effort>("high");
+  const [effort, setEffort] = useState<Effort>(recommendedEffort);
   const [saving, setSaving] = useState(false);
 
   // Each time it opens, it starts from what Claude Desktop has now.
@@ -77,7 +80,7 @@ export function ModelSheet() {
   useEffect(() => {
     if (!modelsOpen) return;
     setModel(saved?.models[0] ?? null);
-    setEffort(saved?.effort ?? "high");
+    setEffort(saved?.effort ?? recommendedEffort);
     // Only on opening: a refresh while choosing keeps the choice.
   }, [modelsOpen]);
 
@@ -230,6 +233,7 @@ export function ModelSheet() {
         label="推理程度"
         value={effort}
         options={EFFORTS.map((e) => [e, effortNames[e]] as const)}
+        badge={[recommendedEffort, "推荐"]}
         onChange={setEffort}
       />
       <p className="mt-2 text-caption text-ink/55">

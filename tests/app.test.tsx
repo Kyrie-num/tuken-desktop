@@ -3,12 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { toast, Toaster } from "sonner";
 import { App } from "@/app/App";
-import {
-  LoginProvider,
-  SETUP_DONE,
-  TOUR_DONE,
-  UiProvider,
-} from "@/app/context";
+import { LoginProvider, setupDone, tourSeen, UiProvider } from "@/app/context";
 import {
   createMock,
   installMock,
@@ -52,8 +47,10 @@ beforeEach(() => {
   toast.dismiss();
   localStorage.clear();
   // The first-run guide and the setup have their own tests.
-  localStorage.setItem(TOUR_DONE, "done");
-  localStorage.setItem(SETUP_DONE, "done");
+  for (const uid of [1, 2]) {
+    localStorage.setItem(tourSeen(uid), "done");
+    localStorage.setItem(setupDone(uid), "done");
+  }
   // Rewards on record have been shown already; their popup has its tests.
   localStorage.setItem(rewardsSeen(1), "999");
   localStorage.setItem(rewardsSeen(2), "999");
@@ -105,7 +102,10 @@ describe("兔啃", () => {
     expect(screen.getByLabelText("设置密码")).toHaveValue("my-secret-1");
     await user.type(screen.getByLabelText("邮箱验证码"), MOCK_EMAIL_CODE);
     await user.click(screen.getByRole("button", { name: "注册" }));
-    expect(await screen.findByText("$0.00")).toBeInTheDocument();
+    // A new account goes through the setup first (under its bonus popup).
+    expect(
+      await screen.findByRole("list", { name: "激活步骤", hidden: true }),
+    ).toBeInTheDocument();
     expect(calls(invoke, "auth_register")[0]).toMatchObject({
       email: "new@mail.sustech.edu.cn",
       code: MOCK_EMAIL_CODE,
@@ -126,7 +126,10 @@ describe("兔啃", () => {
     await user.type(screen.getByLabelText("邮箱验证码"), MOCK_EMAIL_CODE);
     await user.type(screen.getByLabelText("设置密码"), "abc12345");
     await user.click(screen.getByRole("button", { name: "注册" }));
-    expect(await screen.findByText("$0.00")).toBeInTheDocument();
+    // A new account goes through the setup first (under its bonus popup).
+    expect(
+      await screen.findByRole("list", { name: "激活步骤", hidden: true }),
+    ).toBeInTheDocument();
     expect(calls(invoke, "login_start")).toHaveLength(0);
   });
 
@@ -233,8 +236,8 @@ describe("兔啃", () => {
     ).toBeInTheDocument();
   });
 
-  it("sets up a new computer before the home page", async () => {
-    localStorage.removeItem(SETUP_DONE);
+  it("sets up a new account before the home page", async () => {
+    localStorage.removeItem(setupDone(1));
     const user = userEvent.setup();
     const invoke = show("in", { noDesktop: true });
     // No pages to wander off to until it is done.
@@ -249,10 +252,9 @@ describe("兔啃", () => {
     // The newest Opus and the highest effort are chosen; both can change.
     const model = await screen.findByRole("combobox", { name: "默认模型" });
     expect(model).toHaveValue("claude-opus-5-5");
-    expect(screen.getByRole("tab", { name: "最高" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    const max = screen.getByRole("tab", { name: /^最高/ });
+    expect(max).toHaveAttribute("aria-selected", "true");
+    expect(within(max).getByText("推荐")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "一键配置" }));
     expect(
       await screen.findByRole(
@@ -278,11 +280,11 @@ describe("兔啃", () => {
     expect(invoke.mock.calls.some(([cmd]) => cmd === "desktop_open")).toBe(
       true,
     );
-    expect(localStorage.getItem(SETUP_DONE)).toBe("done");
+    expect(localStorage.getItem(setupDone(1))).toBe("done");
   });
 
   it("lets the setup use another model and effort", async () => {
-    localStorage.removeItem(SETUP_DONE);
+    localStorage.removeItem(setupDone(1));
     const user = userEvent.setup();
     const invoke = show("in");
     await user.selectOptions(
@@ -303,7 +305,7 @@ describe("兔啃", () => {
   });
 
   it("asks for credit first when the account has none", async () => {
-    localStorage.removeItem(SETUP_DONE);
+    localStorage.removeItem(setupDone(1));
     const user = userEvent.setup();
     show("in", { noCredit: true });
     expect(
@@ -324,12 +326,41 @@ describe("兔啃", () => {
     ).toBeInTheDocument();
   }, 15_000);
 
-  it("skips the setup where Claude Desktop already runs on 兔啃", async () => {
-    localStorage.removeItem(SETUP_DONE);
-    show("ok");
+  it("goes straight home for an account made before", async () => {
+    localStorage.removeItem(setupDone(1));
+    localStorage.removeItem(tourSeen(1));
+    show("in", { oldAccount: true, noDesktop: true });
     expect(await screen.findByText("$28.50")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "激活步骤" })).toBeNull();
-    await waitFor(() => expect(localStorage.getItem(SETUP_DONE)).toBe("done"));
+    await waitFor(() =>
+      expect(localStorage.getItem(setupDone(1))).toBe("done"),
+    );
+    // No guide either, unless asked for from the account menu.
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("sets up a new account where Claude Desktop already runs on 兔啃", async () => {
+    localStorage.removeItem(setupDone(1));
+    show("ok");
+    expect(
+      await screen.findByRole("list", { name: "激活步骤" }),
+    ).toBeInTheDocument();
+  });
+
+  it("counts 0.2.0's marks for the account signed in", async () => {
+    localStorage.removeItem(setupDone(1));
+    localStorage.removeItem(tourSeen(1));
+    localStorage.setItem("tuken-setup", "done");
+    localStorage.setItem("tuken-tour", "done");
+    show("in");
+    expect(await screen.findByText("$28.50")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "激活步骤" })).toBeNull();
+    expect(localStorage.getItem(setupDone(1))).toBe("done");
+    expect(localStorage.getItem("tuken-setup")).toBeNull();
+    await waitFor(() => expect(localStorage.getItem(tourSeen(1))).toBe("done"));
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("welcomes a new account with its sign-up bonus", async () => {
@@ -368,7 +399,7 @@ describe("兔啃", () => {
   });
 
   it("guides a new user once, and again from the account menu", async () => {
-    localStorage.removeItem(TOUR_DONE);
+    localStorage.removeItem(tourSeen(1));
     const user = userEvent.setup();
     show("in");
     const titles = ["这是你的余额", "接入 Claude", "你的密钥", "账单和模型"];
@@ -385,7 +416,7 @@ describe("兔啃", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
-    expect(localStorage.getItem(TOUR_DONE)).toBe("done");
+    expect(localStorage.getItem(tourSeen(1))).toBe("done");
 
     await user.click(screen.getByRole("button", { name: "账户" }));
     await user.click(await screen.findByRole("menuitem", { name: /新手指引/ }));
@@ -534,7 +565,10 @@ describe("兔啃", () => {
     await user.type(screen.getByLabelText("设置密码"), "abc12345");
     await user.type(screen.getByLabelText("邀请码"), "XM2026");
     await user.click(screen.getByRole("button", { name: "注册" }));
-    expect(await screen.findByText("$0.00")).toBeInTheDocument();
+    // A new account goes through the setup first (under its bonus popup).
+    expect(
+      await screen.findByRole("list", { name: "激活步骤", hidden: true }),
+    ).toBeInTheDocument();
     expect(calls(invoke, "auth_register")[0]).toMatchObject({
       affiliate_code: "XM2026",
     });
@@ -555,7 +589,10 @@ describe("兔啃", () => {
     expect(screen.getByRole("button", { name: "注册" })).toBeDisabled();
     await user.type(screen.getByLabelText("邀请码"), "XM2026");
     await user.click(screen.getByRole("button", { name: "注册" }));
-    expect(await screen.findByText("$0.00")).toBeInTheDocument();
+    // A new account goes through the setup first (under its bonus popup).
+    expect(
+      await screen.findByRole("list", { name: "激活步骤", hidden: true }),
+    ).toBeInTheDocument();
     expect(calls(invoke, "auth_register")[0]).toMatchObject({
       affiliate_code: "XM2026",
     });
@@ -660,6 +697,10 @@ describe("兔啃", () => {
         .getAllByRole("radio")
         .map((r) => r.getAttribute("title")),
     ).toEqual(["claude-opus-5-5", "claude-sonnet-4-5", "claude-haiku-4-5"]);
+    // The highest effort is chosen and recommended to start with.
+    const max = within(sheet).getByRole("tab", { name: /^最高/ });
+    expect(max).toHaveAttribute("aria-selected", "true");
+    expect(within(max).getByText("推荐")).toBeInTheDocument();
     await user.click(within(sheet).getByRole("radio", { name: /Sonnet 4\.5/ }));
     await user.click(within(sheet).getByRole("tab", { name: "超高" }));
     await user.click(within(sheet).getByRole("button", { name: "保存" }));

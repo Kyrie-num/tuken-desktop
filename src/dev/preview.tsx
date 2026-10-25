@@ -4,8 +4,10 @@
  * desktop sign-in API; &paid=never to keep an order waiting for payment;
  * &desktop=none for a computer without Claude Desktop, &credit=none for an
  * account without credit (the setup shows until it is finished once);
+ * &account=old for an account made long ago (no setup, no guide);
  * &os=mac for macOS (traffic lights drawn in, vibrancy over a wallpaper);
- * &quiet without the first-run guide and reward popups, for screenshots.
+ * &quiet without the setup, the first-run guide and reward popups, for
+ * screenshots.
  * The body stands in for the desktop wallpaper that Windows 11 Mica shows
  * through the window.
  */
@@ -14,9 +16,11 @@ import { createMock, installMock, type Scenario } from "./mock";
 const params = new URLSearchParams(location.search);
 const scenario = (params.get("s") ?? "in") as Scenario;
 if (params.has("quiet")) {
-  for (const k of ["tuken-tour", "tuken-setup"])
-    localStorage.setItem(k, "done");
-  for (const uid of [1, 2]) localStorage.setItem(`tuken-rewards-${uid}`, "999");
+  for (const uid of [1, 2]) {
+    for (const k of ["tuken-tour", "tuken-setup"])
+      localStorage.setItem(`${k}-${uid}`, "done");
+    localStorage.setItem(`tuken-rewards-${uid}`, "999");
+  }
 }
 installMock(
   createMock(scenario, {
@@ -25,6 +29,7 @@ installMock(
     noDesktop: params.get("desktop") === "none",
     noCredit: params.get("credit") === "none",
     platform: params.get("os") === "mac" ? "macos" : "windows",
+    oldAccount: params.get("account") === "old",
   }),
 );
 
