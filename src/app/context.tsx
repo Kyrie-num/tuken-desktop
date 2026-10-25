@@ -24,6 +24,7 @@ import {
   useAppState,
   useAuthConfig,
   useDesktop,
+  useProfile,
 } from "@/lib/queries";
 
 export type Page = "home" | "bills" | "models" | "profile";
@@ -63,8 +64,9 @@ type Ui = {
   inviteOpen: boolean;
   setInviteOpen: (open: boolean) => void;
   /**
-   * The first-run setup on this computer: still to decide, on show (until
-   * finished, even once Claude Desktop is configured), or done.
+   * The signed-in account's first-run setup on this computer: still to
+   * decide, on show (until finished, even once Claude Desktop is
+   * configured), or done.
    */
   setup: "unknown" | "show" | "done";
   beginSetup: () => void;
@@ -78,11 +80,31 @@ type Ui = {
 
 const UiContext = createContext<Ui | null>(null);
 
-/** Set once the guide has been seen or skipped on this computer. */
-export const TOUR_DONE = "tuken-tour";
-/** Set once this computer's setup is finished (or was never needed). */
-export const SETUP_DONE = "tuken-setup";
-export const tourDone = () => localStorage.getItem(TOUR_DONE) === "done";
+/** Set once an account has seen or skipped the guide on this computer. */
+export const tourSeen = (uid: number) => `tuken-tour-${uid}`;
+/** Set once an account's setup on this computer is finished (or not needed). */
+export const setupDone = (uid: number) => `tuken-setup-${uid}`;
+/** Accounts made within this many days are new: they get the setup and the guide. */
+export const NEW_ACCOUNT_DAYS = 7;
+
+export const isNewAccount = (createdAt?: string | null) =>
+  Date.now() - (createdAt ? Date.parse(createdAt) : NaN) <
+  NEW_ACCOUNT_DAYS * 864e5;
+
+/**
+ * Whether `key` is marked done. 0.2.0 kept one mark per computer (`legacy`):
+ * it counts for the first account asked about, and goes.
+ */
+function marked(key: string, legacy: string) {
+  const old = localStorage.getItem(legacy);
+  if (old !== null) {
+    if (old === "done") localStorage.setItem(key, "done");
+    localStorage.removeItem(legacy);
+  }
+  return localStorage.getItem(key) === "done";
+}
+export const tourDone = (uid: number) => marked(tourSeen(uid), "tuken-tour");
+const setupMarked = (uid: number) => marked(setupDone(uid), "tuken-setup");
 
 export function UiProvider({ children }: { children: ReactNode }) {
   const [page, go] = useState<Page>("home");
@@ -100,16 +122,22 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [checkinOpen, setCheckinOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [tour, setTour] = useState<number | null>(null);
-  const [setup, setSetup] = useState<Ui["setup"]>(() =>
-    localStorage.getItem(SETUP_DONE) === "done" ? "done" : "unknown",
-  );
-  const beginSetup = useCallback(() => setSetup("show"), []);
-  const finishSetup = useCallback(() => {
-    localStorage.setItem(SETUP_DONE, "done");
-    setSetup("done");
-    go("home");
-  }, []);
   const { uid } = useSession();
+  // Each account's setup as decided in this run; before that, its mark.
+  const [setups, setSetups] = useState<Record<number, Ui["setup"]>>({});
+  const setup: Ui["setup"] =
+    uid === null
+      ? "unknown"
+      : (setups[uid] ?? (setupMarked(uid) ? "done" : "unknown"));
+  const beginSetup = useCallback(() => {
+    if (uid !== null) setSetups((s) => ({ ...s, [uid]: "show" }));
+  }, [uid]);
+  const finishSetup = useCallback(() => {
+    if (uid === null) return;
+    localStorage.setItem(setupDone(uid), "done");
+    setSetups((s) => ({ ...s, [uid]: "done" }));
+    go("home");
+  }, [uid]);
   // Another account starts on its home page.
   useEffect(() => go("home"), [uid]);
   const startTour = useCallback(() => {
@@ -119,8 +147,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
   }, []);
   const endTour = useCallback(() => {
     setTour(null);
-    localStorage.setItem(TOUR_DONE, "done");
-  }, []);
+    if (uid !== null) localStorage.setItem(tourSeen(uid), "done");
+  }, [uid]);
   const value = useMemo<Ui>(
     () => ({
       page,
@@ -172,20 +200,23 @@ export function UiProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * Whether the first-run setup shows: on a computer where Claude Desktop isn't
- * yet installed and configured for 兔啃. Decided once per computer, from the
- * live status, and kept while it runs.
+ * Whether the first-run setup shows: for a new account (made in the last
+ * NEW_ACCOUNT_DAYS days), once on each computer it signs in on, where Claude
+ * Desktop can be set up. Older accounts go straight to the home page.
+ * Decided once per account and computer, and kept while it runs.
  */
 export function useSetup() {
   const { uid } = useSession();
   const { setup, beginSetup, finishSetup } = useUi();
+  const { data: profile } = useProfile(uid);
   const { data: status } = useDesktop();
   useEffect(() => {
-    if (setup !== "unknown" || !uid || !status) return;
-    const ready = status.connected && !!status.models?.models.length;
-    if (status.supported && !ready) beginSetup();
+    if (setup !== "unknown" || !uid || !profile) return;
+    if (!isNewAccount(profile.created_at)) return finishSetup();
+    if (!status) return;
+    if (status.supported) beginSetup();
     else finishSetup();
-  }, [setup, uid, status, beginSetup, finishSetup]);
+  }, [setup, uid, profile, status, beginSetup, finishSetup]);
   return setup;
 }
 

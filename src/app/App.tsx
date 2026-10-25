@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { Backdrop } from "@/components/Backdrop";
 import { cn } from "@/lib/cn";
-import { refreshCredit } from "@/lib/queries";
+import { refreshCredit, useProfile } from "@/lib/queries";
 import { Bills } from "@/features/bills/Bills";
 import { Home } from "@/features/home/Home";
 import { CheckinSheet } from "@/features/home/CheckinSheet";
@@ -27,7 +27,7 @@ import { Tour } from "@/features/tour/Tour";
 import { Setup } from "@/features/setup/Setup";
 import { RewardNotice } from "@/features/rewards/RewardNotice";
 import { Toolbar } from "./Toolbar";
-import { tourDone, useSession, useSetup, useUi } from "./context";
+import { isNewAccount, tourDone, useSession, useSetup, useUi } from "./context";
 
 const pages = { home: Home, bills: Bills, models: Models, profile: Profile };
 
@@ -49,15 +49,17 @@ export function App() {
     return () => stop?.();
   }, [client, uid, rechargeOpen]);
 
-  // The guide shows itself once, after the setup on this computer, unless
-  // something else is already open by then.
+  // The guide shows itself to a new account once on each computer, after
+  // its setup, unless something else is already open by then.
+  const { data: profile } = useProfile(uid);
+  const isNew = isNewAccount(profile?.created_at);
   useEffect(() => {
-    if (!uid || tourDone() || setup !== "done") return;
+    if (!uid || setup !== "done" || tourDone(uid) || !isNew) return;
     const t = window.setTimeout(() => {
       if (!document.querySelector('[role="dialog"]')) startTour();
     }, 900);
     return () => window.clearTimeout(t);
-  }, [uid, startTour, setup]);
+  }, [uid, isNew, startTour, setup]);
 
   const Page = pages[page];
   return (
