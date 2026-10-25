@@ -249,10 +249,9 @@ describe("兔啃", () => {
     // The newest Opus and the highest effort are chosen; both can change.
     const model = await screen.findByRole("combobox", { name: "默认模型" });
     expect(model).toHaveValue("claude-opus-5-5");
-    expect(screen.getByRole("tab", { name: "最高" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    const max = screen.getByRole("tab", { name: /^最高/ });
+    expect(max).toHaveAttribute("aria-selected", "true");
+    expect(within(max).getByText("推荐")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "一键配置" }));
     expect(
       await screen.findByRole(
@@ -695,6 +694,10 @@ describe("兔啃", () => {
         .getAllByRole("radio")
         .map((r) => r.getAttribute("title")),
     ).toEqual(["claude-opus-5-5", "claude-sonnet-4-5", "claude-haiku-4-5"]);
+    // The highest effort is chosen and recommended to start with.
+    const max = within(sheet).getByRole("tab", { name: /^最高/ });
+    expect(max).toHaveAttribute("aria-selected", "true");
+    expect(within(max).getByText("推荐")).toBeInTheDocument();
     await user.click(within(sheet).getByRole("radio", { name: /Sonnet 4\.5/ }));
     await user.click(within(sheet).getByRole("tab", { name: "超高" }));
     await user.click(within(sheet).getByRole("button", { name: "保存" }));

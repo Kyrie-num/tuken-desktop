@@ -13,6 +13,7 @@ export function Segmented<T extends string>({
   id,
   size = "md",
   stretch = false,
+  badge,
 }: {
   value: T;
   options: readonly (readonly [T, string])[];
@@ -23,6 +24,8 @@ export function Segmented<T extends string>({
   size?: "sm" | "md";
   /** Fills the width, options sharing it equally. */
   stretch?: boolean;
+  /** A small tag on one option, such as the one 兔啃 recommends. */
+  badge?: readonly [T, string];
 }) {
   return (
     <div
@@ -43,7 +46,7 @@ export function Segmented<T extends string>({
             aria-selected={active}
             onClick={() => onChange(key)}
             className={cn(
-              "relative rounded-full font-semibold transition-colors",
+              "relative inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-full font-semibold transition-colors",
               stretch && "flex-1",
               size === "sm" ? "h-7 px-3 text-small" : "h-8 px-4 text-body",
               active ? "text-ink" : "text-ink/60 hover:text-ink",
@@ -57,6 +60,11 @@ export function Segmented<T extends string>({
               />
             )}
             <span className="relative">{text}</span>
+            {badge?.[0] === key && (
+              <span className="relative rounded-full bg-cyan/[0.16] px-1.5 text-[10px] font-bold leading-4 text-cyan-ink">
+                {badge[1]}
+              </span>
+            )}
           </button>
         );
       })}
