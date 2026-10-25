@@ -391,6 +391,50 @@ mod keychain {
         Ok(access)
     }
 
+    /// Diagnostics: like `add`, with any partition-ID entry taken out of the
+    /// access first (does SecItemAdd put its own back?).
+    #[cfg(test)]
+    pub unsafe fn add_without_partitions(service: &str, key: &[u8; 32]) -> OSStatus {
+        #[link(name = "Security", kind = "framework")]
+        extern "C" {
+            fn SecAccessCopyACLList(access: CFTypeRef, list: *mut CFArrayRef) -> OSStatus;
+            fn SecACLCopyAuthorizations(acl: CFTypeRef) -> CFArrayRef;
+            fn SecACLRemove(acl: CFTypeRef) -> OSStatus;
+        }
+        let access = match any_application(service) {
+            Ok(access) => access,
+            Err(status) => return status,
+        };
+        let mut list: CFArrayRef = ptr::null();
+        if SecAccessCopyACLList(access.as_CFTypeRef(), &mut list) == 0 && !list.is_null() {
+            let acls: CFArray<CFType> = CFArray::wrap_under_create_rule(list);
+            for acl in acls.iter() {
+                let tags = SecACLCopyAuthorizations(acl.as_CFTypeRef());
+                if tags.is_null() {
+                    continue;
+                }
+                let tags: CFArray<CFType> = CFArray::wrap_under_create_rule(tags);
+                let partition = tags.iter().any(|t| {
+                    t.downcast::<CFString>()
+                        .is_some_and(|t| t.to_string() == "ACLAuthorizationPartitionID")
+                });
+                if partition {
+                    println!("removing a partition entry from the new access");
+                    SecACLRemove(acl.as_CFTypeRef());
+                }
+            }
+        }
+        let name = |s: CFStringRef| CFString::wrap_under_get_rule(s);
+        let query = CFDictionary::from_CFType_pairs(&[
+            (name(kSecClass), name(kSecClassGenericPassword).as_CFType()),
+            (name(kSecAttrService), CFString::new(service).as_CFType()),
+            (name(kSecAttrAccount), CFString::new(ACCOUNT).as_CFType()),
+            (name(kSecValueData), CFData::from_buffer(key).as_CFType()),
+            (name(kSecAttrAccess), access),
+        ]);
+        SecItemAdd(query.as_concrete_TypeRef(), ptr::null_mut())
+    }
+
     /// Removes a key; for tests, which use their own service names.
     #[cfg(test)]
     pub fn forget(service: &str) {
@@ -706,9 +750,30 @@ mod tests {
         use std::time::{Duration, Instant};
         let ours = format!("site.tuken.desktop.test.{}", uuid::Uuid::new_v4());
         let plain = format!("site.tuken.desktop.test.{}", uuid::Uuid::new_v4());
+        let bare = format!("site.tuken.desktop.test.{}", uuid::Uuid::new_v4());
         let key = keychain::key(&ours).unwrap();
         security_framework::passwords::set_generic_password(&plain, keychain::ACCOUNT, &key)
             .unwrap();
+        println!("bare add: {}", unsafe {
+            keychain::add_without_partitions(&bare, &key)
+        });
+        // What the keychain keeps about each item (access lists, no secrets).
+        let dump = Command::new("/usr/bin/security")
+            .args(["dump-keychain", "-a"])
+            .output()
+            .unwrap();
+        let dump = String::from_utf8_lossy(&dump.stdout);
+        for (what, service) in [("ours", &ours), ("default", &plain), ("bare", &bare)] {
+            for block in dump
+                .split("keychain: ")
+                .filter(|b| b.contains(service.as_str()))
+            {
+                println!(
+                    "==== {what} ====
+{block}"
+                );
+            }
+        }
 
         let dir = tempfile::tempdir().unwrap();
         let update = dir.path().join("update");
@@ -744,8 +809,10 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(200));
             }
         };
-        let (ours_read, plain_read) = (reads(&ours), reads(&plain));
+        let (ours_read, plain_read, bare_read) = (reads(&ours), reads(&plain), reads(&bare));
+        println!("read by a new build: ours {ours_read}, default {plain_read}, bare {bare_read}");
         keychain::forget(&ours);
+        keychain::forget(&bare);
         let _ = security_framework::passwords::delete_generic_password(&plain, keychain::ACCOUNT);
         assert!(
             !plain_read,
