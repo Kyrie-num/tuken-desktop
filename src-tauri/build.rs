@@ -1,4 +1,8 @@
 fn main() {
+    // Link the VC++ runtime into the exe. A fresh Windows has no
+    // VCRUNTIME140(_1).dll unless another program installed the
+    // redistributable, and the app then fails to start.
+    std::env::set_var("STATIC_VCRUNTIME", "true");
     tauri_build::build();
 
     // Test binaries link Tauri but get no application manifest, so they would
