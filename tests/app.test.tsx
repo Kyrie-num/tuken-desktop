@@ -859,7 +859,7 @@ describe("兔啃", () => {
     expect(screen.getByRole("button", { name: "关闭" })).toBeInTheDocument();
     expect(screen.queryByTestId("traffic-lights")).toBeNull();
     expect(
-      screen.getByText("从 Anthropic 官方下载，安装包由 winget 校验"),
+      screen.getByText("从兔啃下载站下载并校验安装包"),
     ).toBeInTheDocument();
   });
 
@@ -891,7 +891,7 @@ describe("兔啃", () => {
     expect(installText(null)).toBeNull();
     expect(installText({ step: "download", percent: 0 })).toBe("正在下载");
     expect(installText({ step: "download", percent: 42 })).toBe("正在下载 42%");
-    expect(installText({ step: "verify" })).toBe("正在检查安装包的签名");
+    expect(installText({ step: "verify" })).toBe("正在校验安装包");
     expect(installText({ step: "copy" })).toBe("正在装进「应用程序」");
   });
 
@@ -931,9 +931,7 @@ describe("兔啃", () => {
       await report({ step: "download", percent: 42 });
       expect(await screen.findByText("正在下载 42%")).toBeInTheDocument();
       await report({ step: "verify" });
-      expect(
-        await screen.findByText("正在检查安装包的签名"),
-      ).toBeInTheDocument();
+      expect(await screen.findByText("正在校验安装包")).toBeInTheDocument();
       await report({ step: "copy" });
       expect(
         await screen.findByText("正在装进「应用程序」"),

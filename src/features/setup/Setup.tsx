@@ -42,6 +42,8 @@ const stepName: Record<Step, string> = {
 };
 
 const DOWNLOAD_PAGE = "https://claude.ai/download";
+const WINDOWS_DOWNLOAD_PAGE =
+  "https://download.tuken.site/claude-code-desktop/v3.6556.2/Claude-Code-Desktop-Windows-x64.exe";
 
 /** Where the setup stands, step by step: done, on show, or still ahead. */
 function Stepper({ steps, at }: { steps: Step[]; at: number }) {
@@ -194,7 +196,9 @@ export function Setup() {
     }
   }
   const openDownloadPage = () =>
-    void tuken("open_link", { url: DOWNLOAD_PAGE }).catch(() => {});
+    void tuken("open_link", {
+      url: isMac() ? DOWNLOAD_PAGE : WINDOWS_DOWNLOAD_PAGE,
+    }).catch(() => {});
 
   // Before the one-click setup: a key in a Claude group (kept, or made once)
   // and the models it offers, so the user can choose.
@@ -344,7 +348,7 @@ export function Setup() {
         >
           {isMac()
             ? "已经打开 Claude 官网的下载页。下载后打开它，把 Claude 拖进「应用程序」，这里会自动继续。"
-            : "已经打开 Claude 官网的下载页，装好后这里会自动继续。"}
+            : "已经打开下载页，装好后这里会自动继续。"}
         </Page>
       ) : install === "failed" ? (
         <Page
@@ -359,21 +363,25 @@ export function Setup() {
               >
                 再试一次
               </button>
-              <button
-                type="button"
-                className="btn btn-glass"
-                onClick={openDownloadPage}
-              >
-                <ExternalLink size={16} />
-                去官网下载
-              </button>
+              {isMac() && (
+                <button
+                  type="button"
+                  className="btn btn-glass"
+                  onClick={openDownloadPage}
+                >
+                  <ExternalLink size={16} />
+                  去官网下载
+                </button>
+              )}
               {skip}
               {help}
             </>
           }
         >
-          {installError || "可能是网络不稳定。"}
-          也可以去官网下载安装，装好后这里会自动继续。
+          {installError || "可能是网络不稳定。"}{" "}
+          {isMac()
+            ? "也可以去官网下载安装，装好后这里会自动继续。"
+            : "请重试，装好后这里会自动继续。"}
         </Page>
       ) : (
         <Page
@@ -389,7 +397,9 @@ export function Setup() {
             </button>
           }
         >
-          从 Anthropic 官方下载安装，装好会自动进入下一步。
+          {isMac()
+            ? "从 Anthropic 官方下载安装，装好会自动进入下一步。"
+            : "从兔啃下载站下载安装，装好会自动进入下一步。"}
         </Page>
       );
   } else if (step === "credit") {

@@ -209,7 +209,7 @@ export type InstallStep =
 
 export const desktop = {
   status: () => invoke<DesktopStatus>("desktop_status"),
-  /** `dmg`: from Anthropic's disk image (macOS); `browser`: the download page. */
+  /** `browser`: the download page; `dmg`: Anthropic's disk image (macOS). */
   install: () =>
     invoke<{ method: "winget" | "dmg" | "browser" | "none" }>(
       "desktop_install",

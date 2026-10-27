@@ -1,6 +1,6 @@
 //! Claude Desktop on this computer: find the installed app, install it
-//! (winget on Windows, Anthropic's signed disk image on macOS), and open or
-//! restart it so a new gateway profile takes effect.
+//! (the 兔啃 download site on Windows, Anthropic's signed disk image on
+//! macOS), and open or restart it so a new gateway profile takes effect.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,9 +10,11 @@ use serde_json::{json, Value};
 
 use crate::claude_config;
 
+#[cfg(target_os = "macos")]
 const DOWNLOAD_PAGE: &str = "https://claude.ai/download";
 #[cfg(not(target_os = "macos"))]
-const WINGET_ID: &str = "Anthropic.Claude";
+const DOWNLOAD_PAGE: &str =
+    "https://download.tuken.site/claude-code-desktop/v3.6556.2/Claude-Code-Desktop-Windows-x64.exe";
 /// Anthropic's MSIX publisher id: package family `Claude_pzs8sxrjxfjjc`.
 #[cfg(windows)]
 const MSIX_PUBLISHER_ID: &str = "pzs8sxrjxfjjc";
@@ -338,8 +340,7 @@ pub async fn desktop_models(
 /// Installs Claude Desktop from Anthropic's disk image once its signature and
 /// notarization check out, reporting progress as `tuken://desktop-install`
 /// events. Something on this Mac in the way (no room, no permission) is said
-/// as it is; any other failure opens the official download page instead, as
-/// Windows does without winget.
+/// as it is; any other failure opens the official download page instead.
 #[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
@@ -372,8 +373,7 @@ pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
     }
 }
 
-/// Installs Claude Desktop with winget (which verifies the installer hash), or
-/// opens the official download page when winget is missing.
+/// Opens the Windows installer from the 兔啃 download site.
 #[cfg(not(target_os = "macos"))]
 #[tauri::command]
 pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
@@ -384,50 +384,11 @@ pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("Claude Desktop 正在安装，请稍候".into());
     }
-    let result = async {
-        let mut command = tokio::process::Command::new("winget");
-        command.args([
-            "install",
-            "--id",
-            WINGET_ID,
-            "--exact",
-            "--source",
-            "winget",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-            "--disable-interactivity",
-        ]);
-        #[cfg(windows)]
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        command.kill_on_drop(true);
-        match tokio::time::timeout(Duration::from_secs(20 * 60), command.output()).await {
-            Err(_) => Err("安装超时，请稍后重试或到官网下载".to_string()),
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                app.opener()
-                    .open_url(DOWNLOAD_PAGE, None::<&str>)
-                    .map_err(|_| "无法打开下载页面".to_string())?;
-                Ok(json!({"method": "browser"}))
-            }
-            Ok(Err(_)) => Err("无法启动 winget".to_string()),
-            Ok(Ok(output)) => {
-                // winget exits non-zero for "already installed" too; the install itself is the proof.
-                if find_install().is_some() {
-                    Ok(json!({"method": "winget"}))
-                } else {
-                    log::warn!(
-                        "winget install {WINGET_ID} failed: {:?} {}",
-                        output.status.code(),
-                        String::from_utf8_lossy(&output.stdout)
-                            .lines()
-                            .last()
-                            .unwrap_or_default()
-                    );
-                    Err("安装没有完成，请稍后重试或到官网下载".to_string())
-                }
-            }
-        }
-    }
-    .await;
+    let result = app
+        .opener()
+        .open_url(DOWNLOAD_PAGE, None::<&str>)
+        .map(|()| json!({"method": "browser"}))
+        .map_err(|_| "无法打开兔啃下载站，请稍后重试".to_string());
     INSTALLING.store(false, Ordering::SeqCst);
     result
 }

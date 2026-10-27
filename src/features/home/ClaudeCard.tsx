@@ -89,10 +89,9 @@ export function ClaudeCard() {
         toast.info(
           mac
             ? "没能自动安装，已打开官网下载页"
-            : "没有找到 winget，已打开官网下载页",
+            : "已打开兔啃下载站，下载后运行安装包即可",
         );
-      else if (r.method === "winget" || r.method === "dmg")
-        toast.success("Claude Desktop 安装好了");
+      else if (r.method === "dmg") toast.success("Claude Desktop 安装好了");
     });
 
   const open = () =>
@@ -200,12 +199,14 @@ export function ClaudeCard() {
             detail={
               installing
                 ? (progress ??
-                  "正在从 Anthropic 官方下载安装，通常 1 到 3 分钟")
+                  (mac
+                    ? "正在从 Anthropic 官方下载安装，通常 1 到 3 分钟"
+                    : "正在从兔啃下载站下载安装，通常 1 到 3 分钟"))
                 : status.installed
                   ? `已安装${status.version ? `，版本 ${status.version}` : ""}`
                   : mac
                     ? "从 Anthropic 官方下载，安装前检查签名"
-                    : "从 Anthropic 官方下载，安装包由 winget 校验"
+                    : "从兔啃下载站下载并校验安装包"
             }
           >
             {!status.installed && (

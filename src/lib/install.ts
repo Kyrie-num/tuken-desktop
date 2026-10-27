@@ -9,7 +9,7 @@ export function installText(step: InstallStep | null): string | null {
     case "download":
       return step.percent > 0 ? `正在下载 ${step.percent}%` : "正在下载";
     case "verify":
-      return "正在检查安装包的签名";
+      return "正在校验安装包";
     case "copy":
       return "正在装进「应用程序」";
   }
