@@ -22,8 +22,6 @@ export function installText(step: InstallStep | null): string | null {
       return "正在检查 Claude Code 运行组件";
     case "code_install":
       return "正在解压安装 Claude Code 运行组件";
-    case "vm_prepare":
-      return "正在准备 Windows 虚拟机平台，可能需要几分钟";
   }
 }
 

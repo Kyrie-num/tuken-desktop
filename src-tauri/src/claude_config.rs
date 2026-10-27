@@ -374,6 +374,45 @@ fn is_ours(entry: &Value) -> bool {
     entry.get("id").and_then(Value::as_str) == Some(PROFILE_ID)
 }
 
+/// Desktop 2.42304 and 3.6556.2 load /epitaxy on a cold launch when this
+/// preference is "epitaxy" (or the legacy "code"). "chat" is the built-in
+/// default, which lands a third-party gateway user on Cowork's /new page.
+/// Preserve an explicit Cowork/Code choice and any future mode we don't know.
+fn default_code_mode(doc: &mut Doc) -> Result<bool, String> {
+    let preferences = doc
+        .root
+        .entry("preferences")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| unreadable(&doc.path))?;
+    if preferences.get("sidebarMode").is_none()
+        || preferences.get("sidebarMode").and_then(Value::as_str) == Some("chat")
+    {
+        set(preferences, "sidebarMode", json!("epitaxy"));
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Seed the first-launch mode before opening a newly installed desktop. This
+/// does not change existing sessions, permission modes or Windows features.
+pub fn prepare_desktop_first_launch(p: &Paths) -> Result<(), String> {
+    p.writable()?;
+    let mut normal = Doc::read(&p.normal_config)?;
+    let mut threep = Doc::read(&p.threep_config)?;
+    let changed = [
+        default_code_mode(&mut normal)?,
+        default_code_mode(&mut threep)?,
+    ];
+    for (doc, changed) in [&normal, &threep].into_iter().zip(changed) {
+        if changed {
+            doc.write(&p.backups)?;
+        }
+    }
+    Ok(())
+}
+
 /// Makes Claude Desktop send its requests to 兔啃 with `key`. Takes effect the
 /// next time Claude Desktop starts.
 pub fn connect_desktop(p: &Paths, key: &str) -> Result<(), String> {
@@ -385,6 +424,7 @@ pub fn connect_desktop(p: &Paths, key: &str) -> Result<(), String> {
 
     for doc in [&mut normal, &mut threep] {
         set(&mut doc.root, "deploymentMode", json!("3p"));
+        default_code_mode(doc)?;
     }
     // A new key starts from Claude Desktop's own model discovery until a
     // default model is chosen again.
@@ -695,6 +735,7 @@ mod tests {
         s.paths.read_only = dev_guard(true, false);
         let models = ["claude-opus-4-1".to_string()];
         for refused in [
+            prepare_desktop_first_launch(&s.paths),
             connect_desktop(&s.paths, "sk-dev"),
             disconnect_desktop(&s.paths),
             set_desktop_models(&s.paths, &models, "max"),
@@ -723,6 +764,11 @@ mod tests {
         connect_desktop(&s.paths, "sk-one").unwrap();
         let normal = read(&s.local.join("Claude").join(CONFIG));
         assert_eq!(normal["deploymentMode"], "3p");
+        assert_eq!(normal["preferences"]["sidebarMode"], "epitaxy");
+        assert_eq!(
+            read(&s.paths.threep_config)["preferences"]["sidebarMode"],
+            "epitaxy"
+        );
         let profile = read(&s.paths.profile(PROFILE_ID));
         assert_eq!(profile["inferenceProvider"], "gateway");
         assert_eq!(profile["inferenceGatewayBaseUrl"], SITE);
@@ -739,6 +785,67 @@ mod tests {
         let meta = read(&s.paths.meta());
         assert!(meta.get("appliedId").is_none());
         assert_eq!(meta["entries"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn first_launch_defaults_to_code_without_changing_other_settings() {
+        let s = sandbox();
+        let original = "\u{feff}{\r\n    \"preferences\": {\r\n        \"sidebarMode\": \"chat\",\r\n        \"bypassPermissionsModeEnabled\": false\r\n    },\r\n    \"mcpServers\": {\"local\": {\"command\": \"example\"}}\r\n}\r\n";
+        put(&s.paths.threep_config, original);
+        prepare_desktop_first_launch(&s.paths).unwrap();
+        let config = read(&s.paths.threep_config);
+        assert_eq!(config["preferences"]["sidebarMode"], "epitaxy");
+        assert_eq!(config["preferences"]["bypassPermissionsModeEnabled"], false);
+        assert_eq!(config["mcpServers"]["local"]["command"], "example");
+        assert_eq!(
+            read(&s.paths.normal_config)["preferences"]["sidebarMode"],
+            "epitaxy"
+        );
+        let bytes = std::fs::read(&s.paths.threep_config).unwrap();
+        assert!(bytes.starts_with(&[0xef, 0xbb, 0xbf]));
+        assert!(String::from_utf8_lossy(&bytes).contains("\r\n    \"preferences\""));
+        assert!(std::fs::read_dir(&s.paths.backups)
+            .unwrap()
+            .any(|e| { std::fs::read(e.unwrap().path()).unwrap() == original.as_bytes() }));
+        prepare_desktop_first_launch(&s.paths).unwrap();
+        assert_eq!(std::fs::read(&s.paths.threep_config).unwrap(), bytes);
+    }
+
+    #[test]
+    fn keeps_an_existing_sidebar_choice_when_opening_or_reconnecting() {
+        for mode in ["task", "code", "epitaxy", "future-mode"] {
+            let s = sandbox();
+            let original = json!({"preferences": {"sidebarMode": mode, "other": true}}).to_string();
+            put(&s.paths.threep_config, &original);
+            prepare_desktop_first_launch(&s.paths).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(&s.paths.threep_config).unwrap(),
+                original
+            );
+            connect_desktop(&s.paths, "sk-test").unwrap();
+            assert_eq!(
+                read(&s.paths.threep_config)["preferences"]["sidebarMode"],
+                mode
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_preferences_prevent_partial_first_launch_or_connection_writes() {
+        for invalid in ["null", "[]", "true", "\"bad\""] {
+            let s = sandbox();
+            let original = format!("{{\"preferences\":{invalid}}}");
+            put(&s.paths.threep_config, &original);
+            assert!(prepare_desktop_first_launch(&s.paths).is_err());
+            assert!(connect_desktop(&s.paths, "sk-test").is_err());
+            assert!(!s.paths.normal_config.exists());
+            assert!(!s.paths.meta().exists());
+            assert!(!s.paths.backups.exists());
+            assert_eq!(
+                std::fs::read_to_string(&s.paths.threep_config).unwrap(),
+                original
+            );
+        }
     }
 
     #[test]
@@ -807,7 +914,10 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys, ["mcpServers", "deploymentMode", "zoom"]);
+        assert_eq!(
+            keys,
+            ["mcpServers", "deploymentMode", "zoom", "preferences"]
+        );
         assert!(text.contains("\"deploymentMode\": \"3p\""));
 
         // CC Switch's entry survives, and comes back when 兔啃 is removed.

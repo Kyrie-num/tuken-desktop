@@ -148,7 +148,6 @@ export type DesktopStatus = {
   install_step?: InstallStep | null;
   /** Windows desktop's separately downloaded Code engine is present. */
   code_ready?: boolean | null;
-  vm?: VirtualMachineStatus | null;
   can_restart: boolean;
   /** Claude Desktop's applied gateway profile points at 兔啃. */
   connected: boolean;
@@ -156,19 +155,6 @@ export type DesktopStatus = {
   cli_connected: boolean;
   /** While connected: the models offered (the default first) and the effort. */
   models: { models: string[]; effort: Effort | null } | null;
-};
-export type VirtualMachineStatus = {
-  state:
-    | "ready"
-    | "disabled"
-    | "restart_required"
-    | "firmware_required"
-    | "needs_repair"
-    | "unsupported"
-    | "error";
-  message: string;
-  can_prepare: boolean;
-  restart_required: boolean;
 };
 /** The site's contact details: free text, may hold links. */
 export type SiteInfo = { contact: string };
@@ -230,18 +216,15 @@ export type InstallStep =
   | { step: "code_download"; percent: number }
   | { step: "code_verify" }
   | { step: "code_install" }
-  | { step: "vm_prepare" }
   | { step: "copy" };
 
 export const desktop = {
   status: () => invoke<DesktopStatus>("desktop_status"),
   /** `msix`: local Windows deployment; `dmg`/`browser`: macOS. */
   install: () =>
-    invoke<{
-      method: "msix" | "dmg" | "browser" | "none" | "runtime";
-      vm?: VirtualMachineStatus | null;
-    }>("desktop_install"),
-  prepareVm: () => invoke<VirtualMachineStatus>("desktop_prepare_vm"),
+    invoke<{ method: "msix" | "dmg" | "browser" | "none" | "runtime" }>(
+      "desktop_install",
+    ),
   open: (restart = false) => invoke<void>("desktop_open", { restart }),
   /** The default model goes first in `models`. */
   setModels: (models: string[], effort: Effort) =>

@@ -7,10 +7,10 @@ on:
     paths:
       - "src-tauri/src/desktop_windows.rs"
       - "src-tauri/src/desktop_code.rs"
-      - "src-tauri/src/desktop_vm.rs"
-      - "src-tauri/src/desktop_vm.ps1"
       - ".github/claude-code-runtime.json"
       - "src-tauri/src/desktop.rs"
+      - "src-tauri/src/claude_config.rs"
+      - ".github/scripts/check_desktop_code_start.cjs"
       - "src-tauri/src/main.rs"
       - ".github/workflows/windows-install.yml"
 
@@ -45,6 +45,7 @@ jobs:
         working-directory: src-tauri
         run: |
           if (Get-AppxPackage -Name Claude) { throw 'Runner must start without Claude' }
+          $before = Get-CimInstance Win32_OptionalFeature -Filter "Name='VirtualMachinePlatform'"
           $env:TUKEN_E2E = '1'
           $env:TUKEN_INSTALLER_EXE = (Resolve-Path target/debug/tuken.exe).Path
           cargo test windows_e2e_mirror_install -- --ignored --nocapture
@@ -53,13 +54,9 @@ jobs:
           if (-not $package -or $package.Version -ne '3.6556.2.0') { throw 'Claude was not registered' }
           if (-not (Test-Path (Join-Path $package.InstallLocation 'app/Claude.exe'))) { throw 'Claude.exe missing' }
           $package | Select-Object Name, Version, Publisher, Status
-          # Read back the actual Windows feature result. The helper never reboots.
-          $vmFeature = Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -ErrorAction SilentlyContinue
-          if ($vmFeature -and $vmFeature.State -notin @('Enabled', 'EnablePending')) { throw "VirtualMachinePlatform was not prepared: $($vmFeature.State)" }
-          cargo test windows_vm_read_only_probe -- --ignored --nocapture
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # The existing-install repair uses its own narrow helper entry point.
-          cargo test windows_e2e_vm_helper -- --ignored --nocapture
+          $after = Get-CimInstance Win32_OptionalFeature -Filter "Name='VirtualMachinePlatform'"
+          if ($before.InstallState -ne $after.InstallState) { throw 'Installing Claude must not change Windows virtualization features' }
+          node ../.github/scripts/check_desktop_code_start.cjs (Join-Path $package.InstallLocation 'app/resources/app.asar')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare and start Code with the official download host blocked
         working-directory: src-tauri

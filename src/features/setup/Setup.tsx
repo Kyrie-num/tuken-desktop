@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { Mascot } from "@/components/Mascot";
 import { InstallProgress } from "@/components/InstallProgress";
-import { VirtualMachineNotice } from "@/components/VirtualMachineNotice";
 import { Segmented } from "@/components/Segmented";
 import { desktop, EFFORTS, tuken, type Effort, type Key } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -409,7 +408,7 @@ export function Setup() {
         >
           {isMac()
             ? "从 Anthropic 官方下载安装，装好会自动进入下一步。"
-            : "同时安装桌面程序、Code 组件并开启 Windows 虚拟机平台。提示授权时请选择「是」，需要重启时兔啃会提醒你。"}
+            : "在兔啃内完成下载和安装，首次打开默认进入 Code。Windows 提示安装授权时请选择「是」。"}
         </Page>
       );
   } else if (step === "credit") {
@@ -557,10 +556,7 @@ export function Setup() {
         }
       >
         默认用 {model ? modelInfo(model).name : "Opus"}，推理程度
-        {level ? effortNames[level] : "最高"}。
-        {status.vm && status.vm.state !== "ready"
-          ? "工作区还需要完成下方的系统准备。"
-          : "打开就能直接用。"}
+        {level ? effortNames[level] : "最高"}，打开就能直接用。
         {status.running &&
           (status.can_restart
             ? "它正开着，会自动重启一下。"
@@ -586,11 +582,6 @@ export function Setup() {
           </motion.div>
         </AnimatePresence>
       </section>
-      {status && (
-        <div className="w-full">
-          <VirtualMachineNotice status={status} />
-        </div>
-      )}
     </div>
   );
 }

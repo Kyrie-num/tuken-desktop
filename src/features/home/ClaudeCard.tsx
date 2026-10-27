@@ -18,7 +18,6 @@ import {
 } from "@/components/Menu";
 import { desktop, type DesktopStatus } from "@/lib/api";
 import { InstallProgress } from "@/components/InstallProgress";
-import { VirtualMachineNotice } from "@/components/VirtualMachineNotice";
 import { cn } from "@/lib/cn";
 import { installText, useInstallStep } from "@/lib/install";
 import { isMac } from "@/lib/platform";
@@ -99,9 +98,7 @@ export function ClaudeCard() {
       } finally {
         client.setQueryData(qk.desktop, await desktop.status());
       }
-      if (r.vm && r.vm.state !== "ready") toast.info(r.vm.message);
-      else if (r.method === "browser")
-        toast.info("没能自动安装，已打开官网下载页");
+      if (r.method === "browser") toast.info("没能自动安装，已打开官网下载页");
       else if (r.method === "dmg" || r.method === "msix")
         toast.success("Claude Desktop 安装好了");
       else if (r.method === "runtime")
@@ -247,7 +244,7 @@ export function ClaudeCard() {
                     ? `已安装${status.version ? `，版本 ${status.version}` : ""}`
                     : mac
                       ? "从 Anthropic 官方下载，安装前检查签名"
-                      : "同时准备 Code 组件和 Windows 虚拟机平台，可能需重启"
+                      : "在兔啃内安装桌面程序和 Code 组件，首次打开默认进入 Code"
             }
           >
             {(!ready || installing) && (
@@ -322,8 +319,6 @@ export function ClaudeCard() {
           </Step>
         </ol>
       )}
-
-      {status && <VirtualMachineNotice status={status} />}
 
       {status?.supported && (
         <div className="mt-4 flex items-center gap-3 rounded-[16px] bg-ink/[0.045] px-3.5 py-2.5">

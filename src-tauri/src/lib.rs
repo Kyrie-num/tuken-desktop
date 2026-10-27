@@ -11,8 +11,6 @@ mod desktop_code;
 #[cfg(any(target_os = "macos", test))]
 mod desktop_mac;
 #[cfg(windows)]
-mod desktop_vm;
-#[cfg(windows)]
 pub mod desktop_windows;
 mod google;
 mod panel;
@@ -538,7 +536,6 @@ pub fn run() {
                 account::tuken,
                 desktop::desktop_status,
                 desktop::desktop_install,
-                desktop::desktop_prepare_vm,
                 desktop::desktop_open,
                 desktop::desktop_models,
                 backdrop,

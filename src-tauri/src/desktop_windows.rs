@@ -1,6 +1,5 @@
 //! Full, pinned Claude MSIX from 兔啃. The elevated helper only verifies and
-//! deploys this package and prepares Windows' Virtual Machine Platform;
-//! Windows verifies the package's publisher signature at deployment.
+//! deploys this package; Windows verifies its publisher signature at deployment.
 //! Progress uses a local pipe, never a writable elevated status file or a shell.
 
 use std::fs::OpenOptions;
@@ -34,7 +33,6 @@ const MSIX_URL: &str = "https://download.tuken.site/claude-code-desktop/v3.6556.
 const MSIX_SIZE: u64 = 284_230_330;
 const MSIX_SHA256: &str = "c0ac245c9ad458abd550bcbf2a0b34c75c51173a27f3c870602e5452cf3484f1";
 const HELPER: &str = "--tuken-install-claude-msix";
-const VM_HELPER: &str = "--tuken-prepare-claude-vm";
 const PIPE_PREFIX: &str = r"\\.\pipe\tuken-claude-";
 
 fn disk_error(e: std::io::Error) -> String {
@@ -116,13 +114,10 @@ fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
     value.encode_wide().chain(Some(0)).collect()
 }
 
-fn elevate(exe: &Path, package: Option<&Path>, pipe: &str) -> Result<Process, String> {
+fn elevate(exe: &Path, package: &Path, pipe: &str) -> Result<Process, String> {
     // The only argument with user-controlled characters is a file path. Windows
     // file names cannot contain quotes; the path ends in .msix (no trailing slash).
-    let parameters = match package {
-        Some(package) => format!("{HELPER} \"{}\" {pipe}", package.display()),
-        None => format!("{VM_HELPER} {pipe}"),
-    };
+    let parameters = format!("{HELPER} \"{}\" {pipe}", package.display());
     let file = wide(exe.as_os_str());
     let args = wide(parameters.as_ref());
     let verb = wide(std::ffi::OsStr::new("runas"));
@@ -147,35 +142,18 @@ fn elevate(exe: &Path, package: Option<&Path>, pipe: &str) -> Result<Process, St
     }))
 }
 
-pub async fn install(progress: impl Fn(Value)) -> Result<crate::desktop_vm::Status, String> {
+pub async fn install(progress: impl Fn(Value)) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     install_with_exe(&exe, progress).await
 }
 
-async fn install_with_exe(
-    exe: &Path,
-    progress: impl Fn(Value),
-) -> Result<crate::desktop_vm::Status, String> {
+async fn install_with_exe(exe: &Path, progress: impl Fn(Value)) -> Result<(), String> {
     let folder = tempfile::Builder::new()
         .prefix("tuken-claude-")
         .tempdir()
         .map_err(disk_error)?;
     let package = folder.path().join("Claude.msix");
     download(&package, &progress).await?;
-    run_helper(exe, Some(&package), progress).await
-}
-
-pub async fn prepare_vm(progress: impl Fn(Value)) -> Result<crate::desktop_vm::Status, String> {
-    crate::desktop_vm::allow_prepare()?;
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    run_helper(&exe, None, progress).await
-}
-
-async fn run_helper(
-    exe: &Path,
-    package: Option<&Path>,
-    progress: impl Fn(Value),
-) -> Result<crate::desktop_vm::Status, String> {
     let pipe = format!("{PIPE_PREFIX}{}", uuid::Uuid::new_v4());
     let server = ServerOptions::new()
         .first_pipe_instance(true)
@@ -184,13 +162,12 @@ async fn run_helper(
         .map_err(|e| format!("无法读取安装进度，请重试：{e}"))?;
     progress(json!({"step": "permission"}));
     let helper_exe = exe.to_path_buf();
-    let helper_package = package.map(Path::to_path_buf);
+    let helper_package = package.clone();
     let helper_pipe = pipe.clone();
-    let process = tokio::task::spawn_blocking(move || {
-        elevate(&helper_exe, helper_package.as_deref(), &helper_pipe)
-    })
-    .await
-    .map_err(|_| "无法启动安装，请重试".to_string())??;
+    let process =
+        tokio::task::spawn_blocking(move || elevate(&helper_exe, &helper_package, &helper_pipe))
+            .await
+            .map_err(|_| "无法启动安装，请重试".to_string())??;
     let pid = unsafe { GetProcessId(process.0.as_raw_handle()) };
     let connected = async {
         loop {
@@ -219,17 +196,14 @@ async fn run_helper(
         let value: Value =
             serde_json::from_str(&line).map_err(|_| "无法读取安装进度，请重试".to_string())?;
         match value["step"].as_str() {
-            Some("complete") => {
-                return serde_json::from_value(value["vm"].clone())
-                    .map_err(|_| "无法读取虚拟机平台准备结果，请重试".into())
-            }
+            Some("complete") => return Ok(()),
             Some("error") => {
                 return Err(value["message"]
                     .as_str()
                     .unwrap_or("安装失败，请重试")
                     .to_string())
             }
-            Some("install" | "verify" | "vm_prepare") => progress(value),
+            Some("install" | "verify") => progress(value),
             _ => {}
         }
     }
@@ -302,20 +276,16 @@ fn deploy(package: &Path, send: impl Fn(Value) + Send + Sync + 'static) -> Resul
 }
 
 /// Called before Tauri's single-instance handling. Invalid helper requests exit
-/// without opening an app or accepting caller-provided commands or packages.
+/// without opening an app, invoking a shell, or installing any other package.
 pub fn helper_entry() -> Option<i32> {
     let args: Vec<_> = std::env::args_os().collect();
-    let installing = match args.get(1).and_then(|a| a.to_str()) {
-        Some(HELPER) => true,
-        Some(VM_HELPER) => false,
-        _ => return None,
-    };
-    if args.len() != if installing { 4 } else { 3 } {
+    if args.get(1).and_then(|a| a.to_str()) != Some(HELPER) {
+        return None;
+    }
+    if args.len() != 4 {
         return Some(1);
     }
-    let pipe = args[if installing { 3 } else { 2 }]
-        .to_str()
-        .unwrap_or_default();
+    let pipe = args[3].to_str().unwrap_or_default();
     if pipe
         .strip_prefix(PIPE_PREFIX)
         .is_none_or(|s| uuid::Uuid::parse_str(s).is_err())
@@ -335,9 +305,7 @@ pub fn helper_entry() -> Option<i32> {
         let _ = writeln!(pipe.lock().unwrap(), "{value}");
     };
     let hr = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
-    let result = if !installing {
-        Ok(())
-    } else if let Err(e) = &hr {
+    let result = if let Err(e) = &hr {
         Err(deployment_error(e.code().0 as u32))
     } else {
         deploy(Path::new(&args[2]), send.clone())
@@ -349,11 +317,7 @@ pub fn helper_entry() -> Option<i32> {
     }
     match result {
         Ok(()) => {
-            send(json!({"step": "vm_prepare"}));
-            // Feature preparation failure doesn't erase a successful MSIX
-            // install or prevent the host Code engine from being used.
-            let vm = crate::desktop_vm::prepare();
-            send(json!({"step": "complete", "vm": vm}));
+            send(json!({"step": "complete"}));
             Some(0)
         }
         Err(message) => {
@@ -383,26 +347,8 @@ mod tests {
     async fn windows_e2e_mirror_install() {
         assert_eq!(std::env::var("TUKEN_E2E").as_deref(), Ok("1"));
         let exe = std::env::var_os("TUKEN_INSTALLER_EXE").expect("build tuken.exe first");
-        let vm = install_with_exe(Path::new(&exe), |p| println!("{p}"))
+        install_with_exe(Path::new(&exe), |p| println!("{p}"))
             .await
             .unwrap();
-        println!(
-            "Windows virtualization preparation: {}",
-            serde_json::to_string(&vm).unwrap()
-        );
-        assert_ne!(vm.state, "error", "{}", vm.message);
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn windows_e2e_vm_helper() {
-        assert_eq!(std::env::var("TUKEN_E2E").as_deref(), Ok("1"));
-        assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
-        let exe = std::env::var_os("TUKEN_INSTALLER_EXE").expect("build tuken.exe first");
-        let vm = run_helper(Path::new(&exe), None, |p| println!("{p}"))
-            .await
-            .unwrap();
-        println!("{}", serde_json::to_string(&vm).unwrap());
-        assert_ne!(vm.state, "error", "{}", vm.message);
     }
 }

@@ -327,14 +327,6 @@ pub async fn desktop_status(app: tauri::AppHandle) -> Result<Value, String> {
     });
     #[cfg(not(windows))]
     let code_ready: Option<bool> = None;
-    #[cfg(windows)]
-    let vm = if install.is_some() {
-        Some(crate::desktop_vm::status(false).await)
-    } else {
-        None
-    };
-    #[cfg(not(windows))]
-    let vm: Option<Value> = None;
     Ok(json!({
         "supported": cfg!(any(windows, target_os = "macos")),
         "installed": install.is_some(),
@@ -343,7 +335,6 @@ pub async fn desktop_status(app: tauri::AppHandle) -> Result<Value, String> {
         "installing": INSTALLING.load(Ordering::SeqCst),
         "install_step": install_step,
         "code_ready": code_ready,
-        "vm": vm,
         // Dev builds find the developer's own Claude Desktop through the
         // registry, which a sandbox can't redirect, so they never quit it.
         "can_restart": !cfg!(debug_assertions),
@@ -380,7 +371,9 @@ pub async fn desktop_models(
 pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
     use tauri::Emitter;
     use tauri_plugin_opener::OpenerExt;
+    let paths = crate::config_paths(&app)?;
     if find_install().is_some() {
+        claude_config::prepare_desktop_first_launch(&paths)?;
         return Ok(json!({"method": "none"}));
     }
     if INSTALLING.swap(true, Ordering::SeqCst) {
@@ -393,7 +386,10 @@ pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
     .await;
     INSTALLING.store(false, Ordering::SeqCst);
     match result {
-        Ok(_) if find_install().is_some() => Ok(json!({"method": "dmg"})),
+        Ok(_) if find_install().is_some() => {
+            claude_config::prepare_desktop_first_launch(&paths)?;
+            Ok(json!({"method": "dmg"}))
+        }
         Err(crate::desktop_mac::Failure::Local(why)) => Err(why),
         outcome => {
             if let Err(crate::desktop_mac::Failure::Elsewhere(why)) = &outcome {
@@ -411,30 +407,22 @@ pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
 #[cfg(windows)]
 #[tauri::command]
 pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
-    install_windows(app, true).await
-}
-
-#[cfg(windows)]
-async fn install_windows(app: tauri::AppHandle, prepare_platform: bool) -> Result<Value, String> {
     use tauri::Emitter;
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("Claude Desktop 正在安装，请稍候".into());
     }
     let _guard = Installing;
-    let root = crate::config_paths(&app)?.desktop_code_cache(true)?;
+    let paths = crate::config_paths(&app)?;
+    let root = paths.desktop_code_cache(true)?;
     let progress = move |step: Value| {
         *INSTALL_STEP.lock().unwrap() = Some(step.clone());
         let _ = app.emit("tuken://desktop-install", step);
     };
     let mut install = find_install();
     let fresh = install.is_none();
-    let prepared = if fresh {
-        let status = crate::desktop_windows::install(progress.clone()).await?;
-        crate::desktop_vm::remember(status.clone()).await;
-        Some(status)
-    } else {
-        None
-    };
+    if fresh {
+        crate::desktop_windows::install(progress.clone()).await?;
+    }
     // Registration must be visible to the original account, even if UAC used
     // another administrator's credentials. Never claim that download = installed.
     for _ in 0..20 {
@@ -446,50 +434,9 @@ async fn install_windows(app: tauri::AppHandle, prepare_platform: bool) -> Resul
     }
     let install = install.ok_or("安装后未能在当前账户检测到 Claude Desktop。请用当前 Windows 账户授权安装，或重启电脑后重试")?;
     let spec = crate::desktop_code::installed_spec(&install.exe)?;
-    crate::desktop_code::ensure(root, spec, progress.clone()).await?;
-    let vm = if let Some(status) = prepared {
-        Some(status)
-    } else if prepare_platform {
-        let status = crate::desktop_vm::status(true).await;
-        Some(if status.can_prepare {
-            crate::desktop_windows::prepare_vm(progress)
-                .await
-                .unwrap_or_else(crate::desktop_vm::Status::error)
-        } else {
-            status
-        })
-    } else {
-        None
-    };
-    if let Some(status) = vm.as_ref() {
-        crate::desktop_vm::remember(status.clone()).await;
-    }
-    Ok(json!({"method": if fresh { "msix" } else { "runtime" }, "vm": vm}))
-}
-
-#[tauri::command]
-pub async fn desktop_prepare_vm(app: tauri::AppHandle) -> Result<Value, String> {
-    #[cfg(windows)]
-    {
-        use tauri::Emitter;
-        crate::desktop_vm::allow_prepare()?;
-        if INSTALLING.swap(true, Ordering::SeqCst) {
-            return Err("安装正在进行，请稍候".into());
-        }
-        let _guard = Installing;
-        let status = crate::desktop_windows::prepare_vm(move |step| {
-            *INSTALL_STEP.lock().unwrap() = Some(step.clone());
-            let _ = app.emit("tuken://desktop-install", step);
-        })
-        .await?;
-        crate::desktop_vm::remember(status.clone()).await;
-        Ok(json!(status))
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = app;
-        Err("此功能只用于 Windows".into())
-    }
+    crate::desktop_code::ensure(root, spec, progress).await?;
+    claude_config::prepare_desktop_first_launch(&paths)?;
+    Ok(json!({"method": if fresh { "msix" } else { "runtime" }}))
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -504,10 +451,9 @@ pub async fn desktop_install(_app: tauri::AppHandle) -> Result<Value, String> {
 pub async fn desktop_open(app: tauri::AppHandle, restart: bool) -> Result<(), String> {
     // Opening through Tuken also repairs older installs before the first prompt.
     #[cfg(windows)]
-    install_windows(app, false).await?;
-    #[cfg(not(windows))]
-    let _ = app;
+    desktop_install(app.clone()).await?;
     let install = find_install().ok_or("未检测到 Claude Desktop")?;
+    claude_config::prepare_desktop_first_launch(&crate::config_paths(&app)?)?;
     if restart {
         if cfg!(debug_assertions) {
             return Err("开发版不会重启 Claude Desktop，请手动重启".into());

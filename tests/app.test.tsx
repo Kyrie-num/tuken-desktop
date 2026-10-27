@@ -859,7 +859,9 @@ describe("兔啃", () => {
     expect(screen.getByRole("button", { name: "关闭" })).toBeInTheDocument();
     expect(screen.queryByTestId("traffic-lights")).toBeNull();
     expect(
-      screen.getByText("同时准备 Code 组件和 Windows 虚拟机平台，可能需重启"),
+      screen.getByText(
+        "在兔啃内安装桌面程序和 Code 组件，首次打开默认进入 Code",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -992,49 +994,6 @@ describe("兔啃", () => {
       await screen.findByRole("button", { name: "打开 Claude Desktop" }),
     ).toBeEnabled();
     expect(calls(invoke, "open_link")).toHaveLength(0);
-  });
-
-  it("prepares Windows virtualization for an existing installation and clearly requires a restart", async () => {
-    const user = userEvent.setup();
-    const invoke = show("ok", { vmState: "disabled" });
-    await user.click(
-      await screen.findByRole("button", { name: "开启虚拟机平台" }),
-    );
-    expect(await screen.findByText("还需要重启电脑")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "开启虚拟机平台" })).toBeNull();
-    expect(
-      invoke.mock.calls.filter(([cmd]) => cmd === "desktop_prepare_vm"),
-    ).toHaveLength(1);
-    expect(
-      invoke.mock.calls.filter(
-        ([cmd]) => cmd === "desktop_install" || cmd === "desktop_open",
-      ),
-    ).toHaveLength(0);
-  });
-
-  it("explains firmware separately without offering an ineffective Windows repair", async () => {
-    show("ok", { vmState: "firmware_required" });
-    expect(
-      await screen.findByText(/请在 BIOS\/UEFI 中开启/),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "开启虚拟机平台" })).toBeNull();
-  });
-
-  it("keeps the restart reminder when reopening without automatically changing Windows", async () => {
-    const invoke = show("ok", { vmState: "restart_required" });
-    expect(await screen.findByText("还需要重启电脑")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "开启虚拟机平台" })).toBeNull();
-    expect(
-      invoke.mock.calls.filter(([cmd]) => cmd === "desktop_prepare_vm"),
-    ).toHaveLength(0);
-  });
-
-  it("shows the reboot requirement when a fresh setup also enables Windows virtualization", async () => {
-    localStorage.removeItem(setupDone(1));
-    const user = userEvent.setup();
-    show("in", { noDesktop: true, vmState: "disabled" });
-    await user.click(await screen.findByRole("button", { name: "一键安装" }));
-    expect(await screen.findByText("还需要重启电脑")).toBeInTheDocument();
   });
 
   it("does not skip setup just because Desktop exists without its Code engine", async () => {
