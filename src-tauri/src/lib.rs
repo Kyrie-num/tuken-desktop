@@ -3,6 +3,7 @@
 
 mod account;
 mod api;
+mod autostart;
 mod cashier;
 mod claude_config;
 mod desktop;
@@ -476,9 +477,11 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .on_page_load(|webview, payload| {
             // The page shows the window after its first paint; this is only the
-            // fallback for a page that fails to start.
+            // fallback for a page that fails to start. A start at sign-in
+            // stays in the tray.
             if webview.label() == "main"
                 && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+                && !autostart::launched()
             {
                 let window = webview.window();
                 tauri::async_runtime::spawn(async move {
@@ -534,6 +537,8 @@ pub fn run() {
         .invoke_handler({
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 account::tuken,
+                autostart::autostart,
+                autostart::autostarted,
                 desktop::desktop_status,
                 desktop::desktop_install,
                 desktop::desktop_open,

@@ -4,9 +4,14 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { X } from "lucide-react";
 import { Mascot } from "@/components/Mascot";
 import { cn } from "@/lib/cn";
-import { useUi } from "@/app/context";
+import { useCheckin } from "@/lib/queries";
+import { useSession, useUi } from "@/app/context";
 
-/** What the guide points at (a `data-tour` anchor) and what it says there. */
+/**
+ * What the guide points at (a `data-tour` anchor) and what it says there.
+ * It ends on the two ways to get credit, check-in last, so that its button
+ * can take the user straight to today's.
+ */
 const steps = [
   {
     target: "balance",
@@ -29,9 +34,24 @@ const steps = [
     body: "花了多少、充值记录看「账单」，能用哪些模型看「模型」。",
   },
   {
+    target: "notices",
+    title: "公告和通知",
+    body: "新模型上线、活动和维护通知都发在这里。铃铛上出现小圆点，就是有新公告。",
+  },
+  {
     target: "account",
     title: "账户和设置",
-    body: "添加和切换账户、改资料、换深浅色都在这里，这份指引也能在这里重看。",
+    body: "添加和切换账户、改资料、换深浅色、开机自动启动、联系我们，都在这里。这份指引也能在这里重看。",
+  },
+  {
+    target: "invite",
+    title: "邀请好友得额度",
+    body: "点这里拿你的邀请码。好友注册时填上，你就能得额度。",
+  },
+  {
+    target: "checkin",
+    title: "每天签到领额度",
+    body: "每天点一下「签到」就能领额度。",
   },
 ] as const;
 
@@ -42,6 +62,10 @@ const EDGE = 16;
 const WIDTH = 340;
 
 type Box = { x: number; y: number; w: number; h: number; r: number };
+
+/** Whether step `i`'s control is on screen. */
+const onScreen = (i: number) =>
+  !!document.querySelector(`[data-tour="${steps[i].target}"]`);
 
 /** The bubble goes below the control, else above it, else beside it. */
 function placeBubble(b: Box, height: number) {
@@ -68,15 +92,28 @@ function placeBubble(b: Box, height: number) {
  * on the home page, and 兔啃 says in a bubble what each one is for.
  */
 export function Tour() {
-  const { tour, moveTour, endTour } = useUi();
+  const { uid } = useSession();
+  const { tour, moveTour, endTour, setCheckinOpen } = useUi();
+  const checkin = useCheckin(uid).data;
   const reduce = useReducedMotion();
   const [box, setBox] = useState<Box | null>(null);
+  // The steps whose control is on screen: check-in or invites switched off
+  // in the admin leave theirs out, dots included.
+  const [shown, setShown] = useState<number[]>([]);
   const [bubble, setBubble] = useState<HTMLDivElement | null>(null);
   const [height, setHeight] = useState(176);
   const next = useRef<HTMLButtonElement>(null);
   const open = tour !== null;
   const step = tour ?? 0;
-  const last = step === steps.length - 1;
+  const after = shown.find((i) => i > step);
+  const before = shown.filter((i) => i < step).pop();
+  const last = after === undefined;
+  // Today's check-in not collected yet: the button there opens it.
+  const collect =
+    steps[step].target === "checkin" &&
+    checkin?.supported === true &&
+    checkin.enabled &&
+    !checkin.checked_in;
 
   // Follows the step's control: into view, and wherever it moves after.
   useLayoutEffect(() => {
@@ -84,12 +121,15 @@ export function Tour() {
       setBox(null);
       return;
     }
+    const present = steps.flatMap((_, i) => (onScreen(i) ? [i] : []));
+    setShown(present);
     const el = document.querySelector<HTMLElement>(
       `[data-tour="${steps[tour].target}"]`,
     );
     if (!el) {
       // Not on screen in this layout: on to the next one.
-      if (tour + 1 < steps.length) moveTour(tour + 1);
+      const later = present.find((i) => i > tour);
+      if (later !== undefined) moveTour(later);
       else endTour();
       return;
     }
@@ -141,10 +181,16 @@ export function Tour() {
       .querySelector("main")
       ?.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
   };
-  const goTo = (n: number) => {
-    if (n < 0) return;
-    if (n >= steps.length) finish();
-    else moveTour(n);
+  const forward = () => {
+    if (after === undefined) finish();
+    else moveTour(after);
+  };
+  const back = () => {
+    if (before !== undefined) moveTour(before);
+  };
+  const toCheckin = () => {
+    finish();
+    setCheckinOpen(true);
   };
 
   const motionOf = reduce
@@ -186,8 +232,8 @@ export function Tour() {
               // Only the bubble's own buttons and Esc end the guide.
               onInteractOutside={(e) => e.preventDefault()}
               onKeyDown={(e) => {
-                if (e.key === "ArrowRight") goTo(step + 1);
-                if (e.key === "ArrowLeft") goTo(step - 1);
+                if (e.key === "ArrowRight") forward();
+                if (e.key === "ArrowLeft") back();
               }}
             >
               <motion.div
@@ -228,9 +274,9 @@ export function Tour() {
                 </Dialog.Close>
                 <div className="mt-4 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-1.5">
-                    {steps.map((s, i) => (
+                    {shown.map((i) => (
                       <span
-                        key={s.target}
+                        key={steps[i].target}
                         aria-hidden="true"
                         className={cn(
                           "h-1.5 rounded-full transition-all duration-300",
@@ -239,15 +285,15 @@ export function Tour() {
                       />
                     ))}
                     <span className="sr-only">
-                      第 {step + 1} 步，共 {steps.length} 步
+                      第 {shown.indexOf(step) + 1} 步，共 {shown.length} 步
                     </span>
                   </div>
                   <div className="flex gap-2">
-                    {step > 0 && (
+                    {before !== undefined && (
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"
-                        onClick={() => goTo(step - 1)}
+                        onClick={back}
                       >
                         上一步
                       </button>
@@ -256,9 +302,9 @@ export function Tour() {
                       ref={next}
                       type="button"
                       className="btn btn-primary btn-sm min-w-[84px]"
-                      onClick={() => goTo(step + 1)}
+                      onClick={collect ? toCheckin : forward}
                     >
-                      {last ? "开始使用" : "下一步"}
+                      {collect ? "去签到" : last ? "开始使用" : "下一步"}
                     </button>
                   </div>
                 </div>

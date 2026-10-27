@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
+  autostart,
   desktop,
   EXPIRED,
   tuken,
@@ -77,6 +78,7 @@ export const queryClient: QueryClient = new QueryClient({
 export const qk = {
   state: ["state"] as const,
   desktop: ["desktop"] as const,
+  autostart: ["autostart"] as const,
   authConfig: ["auth_config"] as const,
   site: ["site"] as const,
   update: ["update"] as const,
@@ -215,6 +217,15 @@ export function useDesktop() {
     refetchInterval: (q) => (q.state.data?.installing ? 3_000 : 20_000),
     // An install finishing while the user is elsewhere still shows.
     refetchIntervalInBackground: true,
+  });
+}
+
+/** Whether 兔啃 starts at sign-in; Task Manager can switch it off too. */
+export function useAutostart() {
+  return useQuery({
+    queryKey: qk.autostart,
+    queryFn: autostart.get,
+    staleTime: 30_000,
   });
 }
 

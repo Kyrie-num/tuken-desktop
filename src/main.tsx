@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Toaster } from "sonner";
 import { App } from "@/app/App";
 import { LoginProvider, UiProvider } from "@/app/context";
-import { windowMaterial } from "@/lib/api";
+import { autostart, windowMaterial } from "@/lib/api";
 import { persistCache, restoreCache } from "@/lib/persist";
 import { loadPlatform } from "@/lib/platform";
 import { queryClient } from "@/lib/queries";
@@ -43,11 +43,15 @@ export function Root() {
   );
 }
 
-/** Paints the cached pages first, then shows the window: no blank flash. */
+/**
+ * Paints the cached pages first, then shows the window: no blank flash. A
+ * start at sign-in leaves it in the tray until the user opens it.
+ */
 export async function boot() {
-  const [material, platform] = await Promise.all([
+  const [material, platform, hidden] = await Promise.all([
     windowMaterial.get().catch(() => "none" as const),
     loadPlatform(),
+    autostart.launched().catch(() => false),
   ]);
   document.documentElement.dataset.backdrop = material;
   document.documentElement.dataset.platform = platform;
@@ -55,6 +59,7 @@ export async function boot() {
   restoreCache(queryClient);
   persistCache(queryClient);
   createRoot(document.getElementById("root")!).render(<Root />);
+  if (hidden) return;
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
       try {

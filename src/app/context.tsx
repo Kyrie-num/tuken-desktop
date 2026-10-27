@@ -82,6 +82,12 @@ const UiContext = createContext<Ui | null>(null);
 
 /** Set once an account has seen or skipped the guide on this computer. */
 export const tourSeen = (uid: number) => `tuken-tour-${uid}`;
+/**
+ * The guide's edition, kept in that mark. An account that saw an earlier one
+ * ("done") sees it once more while still new: 2 added notices, invites and
+ * check-in.
+ */
+export const TOUR = "2";
 /** Set once an account's setup on this computer is finished (or not needed). */
 export const setupDone = (uid: number) => `tuken-setup-${uid}`;
 /** Accounts made within this many days are new: they get the setup and the guide. */
@@ -92,18 +98,19 @@ export const isNewAccount = (createdAt?: string | null) =>
   NEW_ACCOUNT_DAYS * 864e5;
 
 /**
- * Whether `key` is marked done. 0.2.0 kept one mark per computer (`legacy`):
- * it counts for the first account asked about, and goes.
+ * Whether `key` is marked `value`. 0.2.0 kept one mark per computer
+ * (`legacy`): it counts for the first account asked about, and goes.
  */
-function marked(key: string, legacy: string) {
+function marked(key: string, legacy: string, value = "done") {
   const old = localStorage.getItem(legacy);
   if (old !== null) {
     if (old === "done") localStorage.setItem(key, "done");
     localStorage.removeItem(legacy);
   }
-  return localStorage.getItem(key) === "done";
+  return localStorage.getItem(key) === value;
 }
-export const tourDone = (uid: number) => marked(tourSeen(uid), "tuken-tour");
+export const tourDone = (uid: number) =>
+  marked(tourSeen(uid), "tuken-tour", TOUR);
 const setupMarked = (uid: number) => marked(setupDone(uid), "tuken-setup");
 
 export function UiProvider({ children }: { children: ReactNode }) {
@@ -147,7 +154,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
   }, []);
   const endTour = useCallback(() => {
     setTour(null);
-    if (uid !== null) localStorage.setItem(tourSeen(uid), "done");
+    if (uid !== null) localStorage.setItem(tourSeen(uid), TOUR);
   }, [uid]);
   const value = useMemo<Ui>(
     () => ({

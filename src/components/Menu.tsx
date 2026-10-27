@@ -74,6 +74,45 @@ export function MenuSeparator() {
 
 export const MenuRadioGroup = Menu.RadioGroup;
 
+/** A setting that is on or off, drawn as a switch; the menu stays open. */
+export function MenuCheckbox({
+  checked,
+  onCheckedChange,
+  disabled,
+  children,
+}: {
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Menu.CheckboxItem
+      className={itemClass}
+      checked={checked}
+      onCheckedChange={onCheckedChange}
+      onSelect={(e) => e.preventDefault()}
+      disabled={disabled}
+    >
+      {children}
+      <span
+        aria-hidden="true"
+        className={cn(
+          "relative ml-auto h-[18px] w-[30px] shrink-0 rounded-full transition-colors duration-200",
+          checked ? "bg-cyan" : "bg-ink/15",
+        )}
+      >
+        <span
+          className={cn(
+            "absolute left-[2px] top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow-[0_1px_2px_rgb(0_0_0/0.25)] transition-transform duration-200",
+            checked && "translate-x-[12px]",
+          )}
+        />
+      </span>
+    </Menu.CheckboxItem>
+  );
+}
+
 export function MenuRadio({
   value,
   children,

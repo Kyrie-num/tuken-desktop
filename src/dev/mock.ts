@@ -170,6 +170,8 @@ export function createMock(
     },
     google: null as null | ((v: unknown) => void),
     checkedIn: false,
+    /** Starting with the computer, off until switched on. */
+    autostart: false,
     notices: [
       {
         id: 2,
@@ -714,6 +716,11 @@ export function createMock(
         return null;
       case "platform":
         return platform;
+      case "autostart":
+        if (typeof args.on === "boolean") db.autostart = args.on;
+        return db.autostart;
+      case "autostarted":
+        return false;
       case "desktop_open":
       case "quit":
       case "panel_show":

@@ -12,7 +12,7 @@ import {
  */
 const KEY = "tuken-cache-v1";
 const MAX_AGE = 7 * 24 * 3600_000;
-const SKIP = new Set(["quote", "desktop", "update"]);
+const SKIP = new Set(["quote", "desktop", "update", "autostart"]);
 
 export function restoreCache(client: QueryClient) {
   try {

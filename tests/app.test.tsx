@@ -3,7 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { toast, Toaster } from "sonner";
 import { App } from "@/app/App";
-import { LoginProvider, setupDone, tourSeen, UiProvider } from "@/app/context";
+import {
+  LoginProvider,
+  setupDone,
+  TOUR,
+  tourSeen,
+  UiProvider,
+} from "@/app/context";
 import {
   createMock,
   installMock,
@@ -48,7 +54,7 @@ beforeEach(() => {
   localStorage.clear();
   // The first-run guide and the setup have their own tests.
   for (const uid of [1, 2]) {
-    localStorage.setItem(tourSeen(uid), "done");
+    localStorage.setItem(tourSeen(uid), TOUR);
     localStorage.setItem(setupDone(uid), "done");
   }
   // Rewards on record have been shown already; their popup has its tests.
@@ -358,9 +364,15 @@ describe("兔啃", () => {
     expect(screen.queryByRole("list", { name: "激活步骤" })).toBeNull();
     expect(localStorage.getItem(setupDone(1))).toBe("done");
     expect(localStorage.getItem("tuken-setup")).toBeNull();
+    // That guide was the first edition: a new account sees this one once.
     await waitFor(() => expect(localStorage.getItem(tourSeen(1))).toBe("done"));
-    await new Promise((r) => setTimeout(r, 1200));
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      await screen.findByRole(
+        "dialog",
+        { name: "这是你的余额" },
+        { timeout: 3000 },
+      ),
+    ).toBeInTheDocument();
   });
 
   it("welcomes a new account with its sign-up bonus", async () => {
@@ -398,11 +410,19 @@ describe("兔啃", () => {
     await user.click(within(sheet).getByRole("button", { name: "好的" }));
   });
 
-  it("guides a new user once, and again from the account menu", async () => {
+  it("guides a new user once, ending on today's check-in", async () => {
     localStorage.removeItem(tourSeen(1));
     const user = userEvent.setup();
     show("in");
-    const titles = ["这是你的余额", "接入 Claude", "你的密钥", "账单和模型"];
+    const titles = [
+      "这是你的余额",
+      "接入 Claude",
+      "你的密钥",
+      "账单和模型",
+      "公告和通知",
+      "账户和设置",
+      "邀请好友得额度",
+    ];
     for (const title of titles) {
       expect(
         await screen.findByRole("dialog", { name: title }, { timeout: 3000 }),
@@ -410,23 +430,106 @@ describe("兔啃", () => {
       await user.click(screen.getByRole("button", { name: "下一步" }));
     }
     expect(
-      await screen.findByRole("dialog", { name: "账户和设置" }),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "开始使用" }));
+      await screen.findByRole("dialog", { name: "每天签到领额度" }),
+    ).toHaveTextContent("第 8 步，共 8 步");
+    // Not collected yet: the last button opens today's check-in.
+    await user.click(screen.getByRole("button", { name: "去签到" }));
+    const sheet = await screen.findByRole("dialog", { name: "每日签到" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "每天签到领额度" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(localStorage.getItem(tourSeen(1))).toBe(TOUR);
+    await user.click(
+      within(sheet).getByRole("button", { name: "签到领 $0.10" }),
+    );
+    expect(
+      await within(sheet).findByRole("button", {
+        name: "今天已签到，明天再来",
+      }),
+    ).toBeDisabled();
+    await user.keyboard("{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
-    expect(localStorage.getItem(tourSeen(1))).toBe("done");
 
+    // Again from the account menu; with today's check-in in, it just ends.
     await user.click(screen.getByRole("button", { name: "账户" }));
     await user.click(await screen.findByRole("menuitem", { name: /新手指引/ }));
     expect(
       await screen.findByRole("dialog", { name: "这是你的余额" }),
     ).toBeInTheDocument();
-    await user.keyboard("{Escape}");
+    for (let i = 1; i < 8; i++) await user.keyboard("{ArrowRight}");
+    expect(
+      await screen.findByRole("dialog", { name: "每天签到领额度" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "去签到" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "开始使用" }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
+  }, 15_000);
+
+  it("leaves a check-in switched off in the admin out of the guide", async () => {
+    localStorage.removeItem(tourSeen(1));
+    const user = userEvent.setup();
+    show("in", { checkin: "off" });
+    expect(
+      await screen.findByRole(
+        "dialog",
+        { name: "这是你的余额" },
+        { timeout: 3000 },
+      ),
+    ).toHaveTextContent("第 1 步，共 7 步");
+    for (let i = 1; i < 7; i++) await user.keyboard("{ArrowRight}");
+    expect(
+      await screen.findByRole("dialog", { name: "邀请好友得额度" }),
+    ).toHaveTextContent("第 7 步，共 7 步");
+    await user.click(screen.getByRole("button", { name: "开始使用" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(localStorage.getItem(tourSeen(1))).toBe(TOUR);
+  }, 15_000);
+
+  it("shows the new guide once more to a new account that saw the first", async () => {
+    localStorage.setItem(tourSeen(1), "done");
+    const user = userEvent.setup();
+    show("in");
+    expect(
+      await screen.findByRole(
+        "dialog",
+        { name: "这是你的余额" },
+        { timeout: 3000 },
+      ),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(localStorage.getItem(tourSeen(1))).toBe(TOUR));
+  });
+
+  it("starts with the computer only once switched on in the account menu", async () => {
+    const user = userEvent.setup();
+    const invoke = show("in");
+    await screen.findByText("$28.50");
+    await user.click(screen.getByRole("button", { name: "账户" }));
+    const item = await screen.findByRole("menuitemcheckbox", {
+      name: "开机自动启动",
+    });
+    await waitFor(() => expect(item).not.toHaveAttribute("aria-disabled"));
+    expect(item).toHaveAttribute("aria-checked", "false");
+    await user.click(item);
+    await waitFor(() => expect(item).toHaveAttribute("aria-checked", "true"));
+    // A switch: the menu stays open to show it, and flips back.
+    await user.click(
+      screen.getByRole("menuitemcheckbox", { name: "开机自动启动" }),
+    );
+    await waitFor(() => expect(item).toHaveAttribute("aria-checked", "false"));
+    const switched = invoke.mock.calls
+      .filter(([cmd]) => cmd === "autostart")
+      .map(([, args]) => args?.on)
+      .filter((on) => on !== undefined);
+    expect(switched).toEqual([true, false]);
   });
 
   it("shows announcements under the bell and marks them read", async () => {

@@ -241,5 +241,13 @@ export const windowMaterial = {
     invoke<Material>("set_backdrop_theme", { dark, system }),
 };
 
+/** Starting 兔啃 when the user signs in to the computer, in the tray only. */
+export const autostart = {
+  get: () => invoke<boolean>("autostart"),
+  set: (on: boolean) => invoke<boolean>("autostart", { on }),
+  /** Whether this run began that way: the window then stays hidden. */
+  launched: () => invoke<boolean>("autostarted"),
+};
+
 /** Error text the native side uses for a token the server rejected. */
 export const EXPIRED = "登录授权已过期";

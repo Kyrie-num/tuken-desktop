@@ -7,11 +7,13 @@ import {
   LogOut,
   Moon,
   Plus,
+  Power,
   RefreshCw,
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  MenuCheckbox,
   MenuContent,
   MenuItem,
   MenuLabel,
@@ -21,9 +23,9 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "@/components/Menu";
-import { tuken, type AppState } from "@/lib/api";
+import { autostart, tuken, type AppState } from "@/lib/api";
 import { initial } from "@/lib/format";
-import { prefetchAccount, qk, useUpdate } from "@/lib/queries";
+import { prefetchAccount, qk, useAutostart, useUpdate } from "@/lib/queries";
 import { useTheme, type Theme } from "@/lib/theme";
 import { message, useLogin, useSession, useUi } from "@/app/context";
 import { installUpdate } from "@/features/update/Update";
@@ -40,7 +42,10 @@ export function Avatar({ text, size = 28 }: { text?: string; size?: number }) {
   );
 }
 
-/** The account pill: switch, add and sign out accounts, profile and theme. */
+/**
+ * The account pill: switch, add and sign out accounts, profile, theme and
+ * starting with the computer.
+ */
 export function AccountMenu() {
   const client = useQueryClient();
   const { account, accounts, uid } = useSession();
@@ -48,6 +53,7 @@ export function AccountMenu() {
   const login = useLogin();
   const update = useUpdate();
   const [theme, setTheme] = useTheme();
+  const startup = useAutostart();
 
   async function switchTo(userId: number) {
     if (userId === uid) return;
@@ -68,6 +74,16 @@ export function AccountMenu() {
     // A newer version gets its own offer from UpdateNotice.
     if (r.error) toast.error(message(r.error));
     else if (!r.data) toast.success(`已经是最新版本 ${__APP_VERSION__}`);
+  }
+
+  async function setStartup(on: boolean) {
+    client.setQueryData(qk.autostart, on);
+    try {
+      client.setQueryData(qk.autostart, await autostart.set(on));
+    } catch (e) {
+      toast.error(message(e));
+      void startup.refetch();
+    }
   }
 
   async function signOut() {
@@ -140,6 +156,14 @@ export function AccountMenu() {
             {__APP_VERSION__}
           </span>
         </MenuItem>
+        <MenuCheckbox
+          checked={!!startup.data}
+          disabled={startup.data === undefined}
+          onCheckedChange={(on) => void setStartup(on)}
+        >
+          <Power size={16} className="opacity-70" />
+          开机自动启动
+        </MenuCheckbox>
         <MenuLabel>
           <span className="flex items-center gap-1.5">
             <Moon size={12} />

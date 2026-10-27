@@ -63,6 +63,7 @@ export function BalanceLens() {
         {inviting && (
           <button
             type="button"
+            data-tour="invite"
             className="btn btn-glass btn-sm absolute right-6 top-6"
             onClick={() => setInviteOpen(true)}
           >
@@ -109,6 +110,7 @@ export function BalanceLens() {
           {c && (
             <button
               type="button"
+              data-tour="checkin"
               className="btn btn-glass"
               onClick={() => setCheckinOpen(true)}
             >

@@ -11,14 +11,15 @@
  * The body stands in for the desktop wallpaper that Windows 11 Mica shows
  * through the window.
  */
+import { setupDone, tourSeen, TOUR } from "@/app/context";
 import { createMock, installMock, type Scenario } from "./mock";
 
 const params = new URLSearchParams(location.search);
 const scenario = (params.get("s") ?? "in") as Scenario;
 if (params.has("quiet")) {
   for (const uid of [1, 2]) {
-    for (const k of ["tuken-tour", "tuken-setup"])
-      localStorage.setItem(`${k}-${uid}`, "done");
+    localStorage.setItem(tourSeen(uid), TOUR);
+    localStorage.setItem(setupDone(uid), "done");
     localStorage.setItem(`tuken-rewards-${uid}`, "999");
   }
 }

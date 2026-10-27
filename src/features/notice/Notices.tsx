@@ -18,6 +18,7 @@ export function NoticeBell() {
   return (
     <button
       type="button"
+      data-tour="notices"
       className="icon-btn relative"
       aria-label={unread ? `公告，${unread} 条未读` : "公告"}
       onClick={() => setNoticesOpen(true)}
