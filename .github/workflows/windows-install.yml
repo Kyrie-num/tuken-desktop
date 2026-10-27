@@ -1,0 +1,51 @@
+name: Windows 应用内安装
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src-tauri/src/desktop_windows.rs"
+      - "src-tauri/src/desktop.rs"
+      - "src-tauri/src/main.rs"
+      - ".github/workflows/windows-install.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:renderer
+      - name: Build the same installer helper shipped in Tuken
+        working-directory: src-tauri
+        run: cargo build --bin tuken
+      - name: Download from the mirror and install locally
+        working-directory: src-tauri
+        run: |
+          if (Get-AppxPackage -Name Claude) { throw 'Runner must start without Claude' }
+          $env:TUKEN_E2E = '1'
+          $env:TUKEN_INSTALLER_EXE = (Resolve-Path target/debug/tuken.exe).Path
+          cargo test windows_e2e_mirror_install -- --ignored --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $package = Get-AppxPackage -Name Claude
+          if (-not $package -or $package.Version -ne '3.6556.2.0') { throw 'Claude was not registered' }
+          if (-not (Test-Path (Join-Path $package.InstallLocation 'app/Claude.exe'))) { throw 'Claude.exe missing' }
+          $package | Select-Object Name, Version, Publisher, Status

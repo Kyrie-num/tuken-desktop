@@ -16,7 +16,8 @@ import {
   MenuRoot,
   MenuTrigger,
 } from "@/components/Menu";
-import { desktop } from "@/lib/api";
+import { desktop, type DesktopStatus } from "@/lib/api";
+import { InstallProgress } from "@/components/InstallProgress";
 import { cn } from "@/lib/cn";
 import { installText, useInstallStep } from "@/lib/install";
 import { isMac } from "@/lib/platform";
@@ -30,12 +31,14 @@ function Step({
   done,
   title,
   detail,
+  progress,
   children,
 }: {
   n: number;
   done: boolean;
   title: string;
   detail: string;
+  progress?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   return (
@@ -52,6 +55,7 @@ function Step({
       <div className="min-w-[9rem] flex-1">
         <p className="text-strong font-semibold">{title}</p>
         <p className="text-caption text-ink/60">{detail}</p>
+        {progress && <div className="mt-2">{progress}</div>}
       </div>
       {children && (
         <div className="ml-auto flex items-center gap-2">{children}</div>
@@ -78,20 +82,24 @@ export function ClaudeCard() {
   const chosen = claude.find((g) => g.id === groupId)?.id ?? claude[0]?.id;
   const desktopKey = keys.data?.find((k) => k.in_desktop);
   const installing = !!status?.installing || install.busy;
-  const progress = installText(useInstallStep(installing));
+  const installStep = useInstallStep(installing, status?.install_step);
+  const progress = installText(installStep);
   const mac = isMac();
 
   const runInstall = () =>
     install.run(async () => {
-      const r = await desktop.install();
-      client.setQueryData(qk.desktop, await desktop.status());
-      if (r.method === "browser")
-        toast.info(
-          mac
-            ? "没能自动安装，已打开官网下载页"
-            : "已打开兔啃下载站，下载后运行安装包即可",
-        );
-      else if (r.method === "dmg") toast.success("Claude Desktop 安装好了");
+      client.setQueryData<DesktopStatus>(qk.desktop, (old) =>
+        old ? { ...old, installing: true, install_step: null } : old,
+      );
+      let r;
+      try {
+        r = await desktop.install();
+      } finally {
+        client.setQueryData(qk.desktop, await desktop.status());
+      }
+      if (r.method === "browser") toast.info("没能自动安装，已打开官网下载页");
+      else if (r.method === "dmg" || r.method === "msix")
+        toast.success("Claude Desktop 安装好了");
     });
 
   const open = () =>
@@ -196,6 +204,9 @@ export function ClaudeCard() {
             n={1}
             done={status.installed}
             title="安装 Claude Desktop"
+            progress={
+              installing ? <InstallProgress step={installStep} /> : null
+            }
             detail={
               installing
                 ? (progress ??
@@ -206,7 +217,7 @@ export function ClaudeCard() {
                   ? `已安装${status.version ? `，版本 ${status.version}` : ""}`
                   : mac
                     ? "从 Anthropic 官方下载，安装前检查签名"
-                    : "从兔啃下载站下载并校验安装包"
+                    : "在兔啃内下载安装，系统提示时请允许安装"
             }
           >
             {!status.installed && (

@@ -144,6 +144,8 @@ export type DesktopStatus = {
   version: string | null;
   running: boolean;
   installing: boolean;
+  /** Current Windows install stage, including after navigating back. */
+  install_step?: InstallStep | null;
   can_restart: boolean;
   /** Claude Desktop's applied gateway profile points at 兔啃. */
   connected: boolean;
@@ -203,17 +205,19 @@ export function tuken<T>(action: string, input?: Record<string, unknown>) {
   return invoke<T>("tuken", { action, input });
 }
 
-/** How far an install has got; macOS reports it as `tuken://desktop-install`. */
+/** Native download/deployment progress via `tuken://desktop-install`. */
 export type InstallStep =
-  { step: "download"; percent: number } | { step: "verify" } | { step: "copy" };
+  | { step: "download"; percent: number }
+  | { step: "verify" }
+  | { step: "permission" }
+  | { step: "install"; percent: number }
+  | { step: "copy" };
 
 export const desktop = {
   status: () => invoke<DesktopStatus>("desktop_status"),
-  /** `browser`: the download page; `dmg`: Anthropic's disk image (macOS). */
+  /** `msix`: local Windows deployment; `dmg`/`browser`: macOS. */
   install: () =>
-    invoke<{ method: "winget" | "dmg" | "browser" | "none" }>(
-      "desktop_install",
-    ),
+    invoke<{ method: "msix" | "dmg" | "browser" | "none" }>("desktop_install"),
   open: (restart = false) => invoke<void>("desktop_open", { restart }),
   /** The default model goes first in `models`. */
   setModels: (models: string[], effort: Effort) =>

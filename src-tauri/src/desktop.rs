@@ -12,14 +12,23 @@ use crate::claude_config;
 
 #[cfg(target_os = "macos")]
 const DOWNLOAD_PAGE: &str = "https://claude.ai/download";
-#[cfg(not(target_os = "macos"))]
-const DOWNLOAD_PAGE: &str =
-    "https://download.tuken.site/claude-code-desktop/v3.6556.2/Claude-Code-Desktop-Windows-x64.exe";
 /// Anthropic's MSIX publisher id: package family `Claude_pzs8sxrjxfjjc`.
 #[cfg(windows)]
 const MSIX_PUBLISHER_ID: &str = "pzs8sxrjxfjjc";
 
 static INSTALLING: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+static INSTALL_STEP: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+
+#[cfg(windows)]
+struct Installing;
+#[cfg(windows)]
+impl Drop for Installing {
+    fn drop(&mut self) {
+        *INSTALL_STEP.lock().unwrap() = None;
+        INSTALLING.store(false, Ordering::SeqCst);
+    }
+}
 
 struct Install {
     version: String,
@@ -299,6 +308,10 @@ fn launch(install: &Install) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn desktop_status(app: tauri::AppHandle) -> Result<Value, String> {
+    #[cfg(windows)]
+    let install_step = INSTALL_STEP.lock().unwrap().clone();
+    #[cfg(not(windows))]
+    let install_step: Option<Value> = None;
     let install = find_install();
     let running = install
         .as_ref()
@@ -310,6 +323,7 @@ pub async fn desktop_status(app: tauri::AppHandle) -> Result<Value, String> {
         "version": install.as_ref().map(|i| i.version.clone()),
         "running": running,
         "installing": INSTALLING.load(Ordering::SeqCst),
+        "install_step": install_step,
         // Dev builds find the developer's own Claude Desktop through the
         // registry, which a sandbox can't redirect, so they never quit it.
         "can_restart": !cfg!(debug_assertions),
@@ -373,24 +387,38 @@ pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
     }
 }
 
-/// Opens the Windows installer from the 兔啃 download site.
-#[cfg(not(target_os = "macos"))]
+/// Downloads the full MSIX and deploys it locally. No browser or bootstrapper.
+#[cfg(windows)]
 #[tauri::command]
 pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
-    use tauri_plugin_opener::OpenerExt;
+    use tauri::Emitter;
     if find_install().is_some() {
         return Ok(json!({"method": "none"}));
     }
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("Claude Desktop 正在安装，请稍候".into());
     }
-    let result = app
-        .opener()
-        .open_url(DOWNLOAD_PAGE, None::<&str>)
-        .map(|()| json!({"method": "browser"}))
-        .map_err(|_| "无法打开兔啃下载站，请稍后重试".to_string());
-    INSTALLING.store(false, Ordering::SeqCst);
-    result
+    let _guard = Installing;
+    crate::desktop_windows::install(move |step| {
+        *INSTALL_STEP.lock().unwrap() = Some(step.clone());
+        let _ = app.emit("tuken://desktop-install", step);
+    })
+    .await?;
+    // Registration must be visible to the original account, even if UAC used
+    // another administrator's credentials. Never claim that download = installed.
+    for _ in 0..20 {
+        if find_install().is_some() {
+            return Ok(json!({"method": "msix"}));
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    Err("安装后未能在当前账户检测到 Claude Desktop。请用当前 Windows 账户授权安装，或重启电脑后重试".into())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+#[tauri::command]
+pub async fn desktop_install(_app: tauri::AppHandle) -> Result<Value, String> {
+    Err("目前只支持 Windows 和 macOS".into())
 }
 
 /// Opens Claude Desktop. With `restart`, quits the running app first so a new

@@ -699,7 +699,7 @@ export function createMock(
         if (typeof installEnds === "object") throw installEnds.error;
         if (installEnds === "browser") return { method: "browser" };
         db.desktop.installed = true;
-        return { method: platform === "macos" ? "dmg" : "browser" };
+        return { method: platform === "macos" ? "dmg" : "msix" };
       case "mock:release_install":
         releaseInstall?.();
         return null;

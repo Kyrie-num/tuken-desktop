@@ -8,6 +8,8 @@ mod claude_config;
 mod desktop;
 #[cfg(any(target_os = "macos", test))]
 mod desktop_mac;
+#[cfg(windows)]
+pub mod desktop_windows;
 mod google;
 mod panel;
 mod shop;

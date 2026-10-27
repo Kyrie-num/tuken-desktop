@@ -10,6 +10,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { Mascot } from "@/components/Mascot";
+import { InstallProgress } from "@/components/InstallProgress";
 import { Segmented } from "@/components/Segmented";
 import { desktop, EFFORTS, tuken, type Effort, type Key } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -42,8 +43,6 @@ const stepName: Record<Step, string> = {
 };
 
 const DOWNLOAD_PAGE = "https://claude.ai/download";
-const WINDOWS_DOWNLOAD_PAGE =
-  "https://download.tuken.site/claude-code-desktop/v3.6556.2/Claude-Code-Desktop-Windows-x64.exe";
 
 /** Where the setup stands, step by step: done, on show, or still ahead. */
 function Stepper({ steps, at }: { steps: Step[]; at: number }) {
@@ -140,7 +139,11 @@ export function Setup() {
       setCreditStep(balance <= 0);
   }, [balance, creditStep]);
 
-  const installed = !!status?.installed;
+  const [install, setInstall] = useState<
+    "idle" | "busy" | "browser" | "failed"
+  >("idle");
+  const installed =
+    !!status?.installed && !status.installing && install !== "busy";
   const funded = balance !== undefined && balance > 0;
   const configured = !!status?.connected && !!status.models?.models.length;
   const step: Step = !installed
@@ -177,13 +180,12 @@ export function Setup() {
     return () => window.clearInterval(t);
   }, [step, client, uid]);
 
-  const [install, setInstall] = useState<
-    "idle" | "busy" | "browser" | "failed"
-  >("idle");
   const [installError, setInstallError] = useState("");
-  const progress = installText(
-    useInstallStep(install === "busy" || !!status?.installing),
+  const installStep = useInstallStep(
+    install === "busy" || !!status?.installing,
+    status?.install_step,
   );
+  const progress = installText(installStep);
   async function runInstall() {
     setInstall("busy");
     try {
@@ -197,7 +199,7 @@ export function Setup() {
   }
   const openDownloadPage = () =>
     void tuken("open_link", {
-      url: isMac() ? DOWNLOAD_PAGE : WINDOWS_DOWNLOAD_PAGE,
+      url: DOWNLOAD_PAGE,
     }).catch(() => {});
 
   // Before the one-click setup: a key in a Claude group (kept, or made once)
@@ -328,7 +330,11 @@ export function Setup() {
               {progress ?? "通常 1 到 3 分钟"}，装好会自动继续
             </p>
           }
-        />
+        >
+          <div className="mt-4">
+            <InstallProgress step={installStep} />
+          </div>
+        </Page>
       ) : install === "browser" ? (
         <Page
           title="在浏览器里下载安装"
@@ -399,7 +405,7 @@ export function Setup() {
         >
           {isMac()
             ? "从 Anthropic 官方下载安装，装好会自动进入下一步。"
-            : "从兔啃下载站下载安装，装好会自动进入下一步。"}
+            : "在兔啃内完成下载和安装，装好会自动进入下一步。Windows 提示授权时请选择「是」。"}
         </Page>
       );
   } else if (step === "credit") {

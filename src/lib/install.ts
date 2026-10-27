@@ -10,19 +10,19 @@ export function installText(step: InstallStep | null): string | null {
       return step.percent > 0 ? `正在下载 ${step.percent}%` : "正在下载";
     case "verify":
       return "正在校验安装包";
+    case "permission":
+      return "请在 Windows 授权提示中选择「是」";
+    case "install":
+      return `正在安装 ${step.percent}%`;
     case "copy":
       return "正在装进「应用程序」";
   }
 }
 
-/** The step the install in progress has reached (macOS reports them). */
-export function useInstallStep(active: boolean) {
+/** Listen before the click so fast native events are not lost. */
+export function useInstallStep(active: boolean, snapshot?: InstallStep | null) {
   const [step, setStep] = useState<InstallStep | null>(null);
   useEffect(() => {
-    if (!active) {
-      setStep(null);
-      return;
-    }
     let gone = false;
     let stop: (() => void) | undefined;
     void listen<InstallStep>("tuken://desktop-install", (e) =>
@@ -35,6 +35,9 @@ export function useInstallStep(active: boolean) {
       gone = true;
       stop?.();
     };
+  }, []);
+  useEffect(() => {
+    if (!active) setStep(null);
   }, [active]);
-  return active ? step : null;
+  return active ? (step ?? snapshot ?? null) : null;
 }

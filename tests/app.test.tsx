@@ -859,7 +859,7 @@ describe("兔啃", () => {
     expect(screen.getByRole("button", { name: "关闭" })).toBeInTheDocument();
     expect(screen.queryByTestId("traffic-lights")).toBeNull();
     expect(
-      screen.getByText("从兔啃下载站下载并校验安装包"),
+      screen.getByText("在兔啃内下载安装，系统提示时请允许安装"),
     ).toBeInTheDocument();
   });
 
@@ -893,6 +893,64 @@ describe("兔啃", () => {
     expect(installText({ step: "download", percent: 42 })).toBe("正在下载 42%");
     expect(installText({ step: "verify" })).toBe("正在校验安装包");
     expect(installText({ step: "copy" })).toBe("正在装进「应用程序」");
+  });
+
+  it.each([false, true])(
+    "keeps Windows download and installation progress in the app (setup=%s)",
+    async (setup) => {
+      if (setup) localStorage.removeItem(setupDone(1));
+      const user = userEvent.setup();
+      const invoke = show("in", { noDesktop: true, holdInstall: true });
+      await user.click(await screen.findByRole("button", { name: "一键安装" }));
+      await screen.findByRole("progressbar");
+      const report = (payload: object) =>
+        act(() =>
+          invoke("mock:emit", { event: "tuken://desktop-install", payload }),
+        );
+      await report({ step: "download", percent: 42 });
+      expect(screen.getByRole("progressbar")).toHaveAttribute(
+        "aria-valuenow",
+        "42",
+      );
+      expect(screen.getByRole("progressbar")).toHaveAttribute(
+        "aria-valuetext",
+        "正在下载 42%",
+      );
+      await report({ step: "permission" });
+      expect(screen.getByRole("progressbar")).not.toHaveAttribute(
+        "aria-valuenow",
+      );
+      await report({ step: "install", percent: 68 });
+      expect(screen.getByRole("progressbar")).toHaveAttribute(
+        "aria-valuenow",
+        "68",
+      );
+      expect(screen.getByRole("progressbar")).toHaveAttribute(
+        "aria-valuetext",
+        "正在安装 68%",
+      );
+      expect(screen.queryByText("Claude Desktop 安装好了")).toBeNull();
+      expect(calls(invoke, "open_link")).toHaveLength(0);
+      await act(() => invoke("mock:release_install"));
+      await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
+      if (!setup)
+        expect(
+          await screen.findByText("已安装，版本 1.3.12"),
+        ).toBeInTheDocument();
+      expect(screen.queryByText("在浏览器里下载安装")).toBeNull();
+    },
+  );
+
+  it("lets a Windows user retry after cancelling UAC without opening the browser", async () => {
+    const user = userEvent.setup();
+    const error =
+      "你取消了 Windows 安装授权。点击一键安装重试，并在系统提示中选择「是」";
+    const invoke = show("in", { noDesktop: true, installEnds: { error } });
+    await user.click(await screen.findByRole("button", { name: "一键安装" }));
+    expect(await screen.findByText(error)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "一键安装" })).toBeEnabled();
+    expect(calls(invoke, "open_link")).toHaveLength(0);
+    expect(screen.queryByText("Claude Desktop 安装好了")).toBeNull();
   });
 
   describe("on macOS", () => {

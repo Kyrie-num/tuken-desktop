@@ -1,6 +1,6 @@
 [package]
 name = "tuken"
-version = "0.3.2"
+version = "0.3.3"
 description = "兔啃桌面客户端"
 edition = "2021"
 rust-version = "1.85"
@@ -60,10 +60,19 @@ plist = "1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+windows = { version = "0.61", features = ["Foundation", "Management_Deployment", "Win32_System_WinRT"] }
+windows-future = "0.2"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
     "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [profile.release]
