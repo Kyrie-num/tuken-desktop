@@ -41,6 +41,9 @@ export function createMock(
     noDesktop = false,
     /** Desktop exists but its first-use Code download never completed. */
     missingCode = false,
+    /** Windows prerequisite status for first-run and repair previews. */
+    vmState = "ready" as
+      "ready" | "disabled" | "restart_required" | "firmware_required" | "error",
     /** Sign-up only with an invitation code, Google included. */
     inviteOnly = false,
     /** Daily check-in: on, off in the admin, or not on the server yet. */
@@ -150,6 +153,20 @@ export function createMock(
       supported: true,
       installed: scenario !== "out" && !noDesktop,
       code_ready: !noDesktop && !missingCode,
+      vm:
+        platform === "macos"
+          ? null
+          : {
+              state: vmState,
+              can_prepare: vmState === "disabled" || vmState === "error",
+              restart_required: vmState === "restart_required",
+              message:
+                vmState === "restart_required"
+                  ? "请保存工作后重启 Windows，重启后会自动检查结果。"
+                  : vmState === "firmware_required"
+                    ? "请在 BIOS/UEFI 中开启硬件虚拟化，再重启电脑。"
+                    : "Claude 工作区需要 Windows 虚拟机平台，开启后可能需要重启。",
+            },
       version: "1.3.12",
       running: true,
       installing: false,
@@ -703,7 +720,23 @@ export function createMock(
         if (installEnds === "browser") return { method: "browser" };
         db.desktop.installed = true;
         db.desktop.code_ready = true;
+        if (db.desktop.vm?.state === "disabled")
+          db.desktop.vm = {
+            state: "restart_required",
+            can_prepare: false,
+            restart_required: true,
+            message: "请保存工作后重启 Windows，重启后会自动检查结果。",
+          };
         return { method: platform === "macos" ? "dmg" : "msix" };
+      case "desktop_prepare_vm":
+        await wait(delay * 6);
+        db.desktop.vm = {
+          state: "restart_required",
+          can_prepare: false,
+          restart_required: true,
+          message: "请保存工作后重启 Windows，重启后会自动检查结果。",
+        };
+        return db.desktop.vm;
       case "mock:release_install":
         releaseInstall?.();
         return null;
