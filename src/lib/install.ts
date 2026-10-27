@@ -16,6 +16,12 @@ export function installText(step: InstallStep | null): string | null {
       return `正在安装 ${step.percent}%`;
     case "copy":
       return "正在装进「应用程序」";
+    case "code_download":
+      return `正在下载 Claude Code 运行组件 ${step.percent}%`;
+    case "code_verify":
+      return "正在检查 Claude Code 运行组件";
+    case "code_install":
+      return "正在解压安装 Claude Code 运行组件";
   }
 }
 

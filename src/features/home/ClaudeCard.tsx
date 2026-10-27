@@ -85,6 +85,7 @@ export function ClaudeCard() {
   const installStep = useInstallStep(installing, status?.install_step);
   const progress = installText(installStep);
   const mac = isMac();
+  const ready = !!status?.installed && status.code_ready !== false;
 
   const runInstall = () =>
     install.run(async () => {
@@ -100,18 +101,25 @@ export function ClaudeCard() {
       if (r.method === "browser") toast.info("没能自动安装，已打开官网下载页");
       else if (r.method === "dmg" || r.method === "msix")
         toast.success("Claude Desktop 安装好了");
+      else if (r.method === "runtime")
+        toast.success("Claude Code 运行组件已准备好，可以回去重试了");
     });
 
   const open = () =>
-    void desktop
-      .open(false)
-      .then(() =>
+    void install.run(async () => {
+      client.setQueryData<DesktopStatus>(qk.desktop, (old) =>
+        old ? { ...old, installing: true, install_step: null } : old,
+      );
+      try {
+        await desktop.open(false);
         setTimeout(
           () => void client.invalidateQueries({ queryKey: qk.desktop }),
           2500,
-        ),
-      )
-      .catch((e) => toast.error(String(e)));
+        );
+      } finally {
+        client.setQueryData(qk.desktop, await desktop.status());
+      }
+    });
 
   return (
     <section data-tour="claude" className="glass flex flex-col p-6">
@@ -134,6 +142,14 @@ export function ClaudeCard() {
               </button>
             </MenuTrigger>
             <MenuContent>
+              {!mac && (
+                <MenuItem
+                  disabled={installing}
+                  onSelect={() => void runInstall()}
+                >
+                  修复 Claude Code 运行组件
+                </MenuItem>
+              )}
               <MenuItem danger onSelect={() => void disconnect("desktop")}>
                 断开兔啃，恢复官方登录
               </MenuItem>
@@ -151,7 +167,7 @@ export function ClaudeCard() {
         <p className="mt-5 text-body text-ink/70">
           目前只支持 Windows 和 macOS。
         </p>
-      ) : status.connected && status.installed ? (
+      ) : status.connected && ready ? (
         <div className="mt-5 flex flex-1 flex-col justify-between gap-5">
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 items-center justify-center rounded-full bg-cyan/20 text-cyan-ink">
@@ -190,9 +206,18 @@ export function ClaudeCard() {
             </span>
             <ChevronRight size={16} className="shrink-0 text-ink/40" />
           </button>
+          {installing && (
+            <div className="space-y-2">
+              <p className="text-caption text-ink/60">
+                {progress ?? "正在准备安装"}
+              </p>
+              <InstallProgress step={installStep} />
+            </div>
+          )}
           <button
             type="button"
             className="btn btn-glass self-start"
+            disabled={installing}
             onClick={open}
           >
             打开 Claude Desktop
@@ -202,7 +227,7 @@ export function ClaudeCard() {
         <ol className="mt-2 divide-y divide-ink/[0.08]">
           <Step
             n={1}
-            done={status.installed}
+            done={ready && !installing}
             title="安装 Claude Desktop"
             progress={
               installing ? <InstallProgress step={installStep} /> : null
@@ -213,14 +238,16 @@ export function ClaudeCard() {
                   (mac
                     ? "正在从 Anthropic 官方下载安装，通常 1 到 3 分钟"
                     : "正在从兔啃下载站下载安装，通常 1 到 3 分钟"))
-                : status.installed
-                  ? `已安装${status.version ? `，版本 ${status.version}` : ""}`
-                  : mac
-                    ? "从 Anthropic 官方下载，安装前检查签名"
-                    : "在兔啃内下载安装，系统提示时请允许安装"
+                : status.installed && !ready
+                  ? "还缺 Claude Code 运行组件，补齐后才能开始对话"
+                  : status.installed
+                    ? `已安装${status.version ? `，版本 ${status.version}` : ""}`
+                    : mac
+                      ? "从 Anthropic 官方下载，安装前检查签名"
+                      : "在兔啃内下载安装，系统提示时请允许安装"
             }
           >
-            {!status.installed && (
+            {(!ready || installing) && (
               <button
                 type="button"
                 className="btn btn-glass btn-sm"
@@ -232,7 +259,11 @@ export function ClaudeCard() {
                 ) : (
                   <Download size={14} />
                 )}
-                {installing ? "安装中" : "一键安装"}
+                {installing
+                  ? "安装中"
+                  : status.installed
+                    ? "修复运行组件"
+                    : "一键安装"}
               </button>
             )}
           </Step>
@@ -269,7 +300,12 @@ export function ClaudeCard() {
                   "btn btn-sm",
                   status.installed ? "btn-primary" : "btn-glass",
                 )}
-                disabled={!chosen || busy === "desktop"}
+                disabled={
+                  !chosen ||
+                  busy === "desktop" ||
+                  installing ||
+                  (status.installed && !ready)
+                }
                 onClick={() => void connect("desktop", { groupId: chosen })}
               >
                 {busy === "desktop" ? (

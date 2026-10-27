@@ -317,6 +317,16 @@ pub async fn desktop_status(app: tauri::AppHandle) -> Result<Value, String> {
         .as_ref()
         .is_some_and(|i| !running_pids(&i.exe).is_empty());
     let paths = crate::config_paths(&app)?;
+    #[cfg(windows)]
+    let code_ready = install.as_ref().is_some_and(|i| {
+        crate::desktop_code::installed_spec(&i.exe).is_ok_and(|spec| {
+            paths
+                .desktop_code_cache(false)
+                .is_ok_and(|root| crate::desktop_code::ready(&root, &spec))
+        })
+    });
+    #[cfg(not(windows))]
+    let code_ready: Option<bool> = None;
     Ok(json!({
         "supported": cfg!(any(windows, target_os = "macos")),
         "installed": install.is_some(),
@@ -324,6 +334,7 @@ pub async fn desktop_status(app: tauri::AppHandle) -> Result<Value, String> {
         "running": running,
         "installing": INSTALLING.load(Ordering::SeqCst),
         "install_step": install_step,
+        "code_ready": code_ready,
         // Dev builds find the developer's own Claude Desktop through the
         // registry, which a sandbox can't redirect, so they never quit it.
         "can_restart": !cfg!(debug_assertions),
@@ -392,27 +403,33 @@ pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
 #[tauri::command]
 pub async fn desktop_install(app: tauri::AppHandle) -> Result<Value, String> {
     use tauri::Emitter;
-    if find_install().is_some() {
-        return Ok(json!({"method": "none"}));
-    }
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("Claude Desktop 正在安装，请稍候".into());
     }
     let _guard = Installing;
-    crate::desktop_windows::install(move |step| {
+    let root = crate::config_paths(&app)?.desktop_code_cache(true)?;
+    let progress = move |step: Value| {
         *INSTALL_STEP.lock().unwrap() = Some(step.clone());
         let _ = app.emit("tuken://desktop-install", step);
-    })
-    .await?;
+    };
+    let mut install = find_install();
+    let fresh = install.is_none();
+    if fresh {
+        crate::desktop_windows::install(progress.clone()).await?;
+    }
     // Registration must be visible to the original account, even if UAC used
     // another administrator's credentials. Never claim that download = installed.
     for _ in 0..20 {
-        if find_install().is_some() {
-            return Ok(json!({"method": "msix"}));
+        if install.is_some() {
+            break;
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
+        install = find_install();
     }
-    Err("安装后未能在当前账户检测到 Claude Desktop。请用当前 Windows 账户授权安装，或重启电脑后重试".into())
+    let install = install.ok_or("安装后未能在当前账户检测到 Claude Desktop。请用当前 Windows 账户授权安装，或重启电脑后重试")?;
+    let spec = crate::desktop_code::installed_spec(&install.exe)?;
+    crate::desktop_code::ensure(root, spec, progress).await?;
+    Ok(json!({"method": if fresh { "msix" } else { "runtime" }}))
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -424,7 +441,12 @@ pub async fn desktop_install(_app: tauri::AppHandle) -> Result<Value, String> {
 /// Opens Claude Desktop. With `restart`, quits the running app first so a new
 /// gateway profile takes effect; unsaved input in Claude Desktop is lost.
 #[tauri::command]
-pub async fn desktop_open(restart: bool) -> Result<(), String> {
+pub async fn desktop_open(app: tauri::AppHandle, restart: bool) -> Result<(), String> {
+    // Opening through Tuken also repairs older installs before the first prompt.
+    #[cfg(windows)]
+    desktop_install(app).await?;
+    #[cfg(not(windows))]
+    let _ = app;
     let install = find_install().ok_or("未检测到 Claude Desktop")?;
     if restart {
         if cfg!(debug_assertions) {

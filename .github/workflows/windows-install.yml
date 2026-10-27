@@ -6,6 +6,8 @@ on:
     branches: [main]
     paths:
       - "src-tauri/src/desktop_windows.rs"
+      - "src-tauri/src/desktop_code.rs"
+      - ".github/claude-code-runtime.json"
       - "src-tauri/src/desktop.rs"
       - "src-tauri/src/main.rs"
       - ".github/workflows/windows-install.yml"
@@ -49,3 +51,15 @@ jobs:
           if (-not $package -or $package.Version -ne '3.6556.2.0') { throw 'Claude was not registered' }
           if (-not (Test-Path (Join-Path $package.InstallLocation 'app/Claude.exe'))) { throw 'Claude.exe missing' }
           $package | Select-Object Name, Version, Publisher, Status
+      - name: Prepare and start Code with the official download host blocked
+        working-directory: src-tauri
+        run: |
+          # A missing engine cannot silently be fetched from Anthropic in this test.
+          Add-Content -LiteralPath "$env:SystemRoot/System32/drivers/etc/hosts" -Value "`n0.0.0.0 downloads.claude.ai`n::1 downloads.claude.ai"
+          ipconfig /flushdns | Out-Null
+          curl.exe --noproxy '*' --fail --silent --max-time 5 https://downloads.claude.ai/ -o NUL
+          if ($LASTEXITCODE -eq 0) { throw 'Official download host must be blocked' }
+          $package = Get-AppxPackage -Name Claude
+          $env:TUKEN_TEST_ASAR = Join-Path $package.InstallLocation 'app/resources/app.asar'
+          cargo test windows_e2e_code_runtime -- --ignored --nocapture
+          exit $LASTEXITCODE

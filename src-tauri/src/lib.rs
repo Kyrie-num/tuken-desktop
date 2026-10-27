@@ -6,6 +6,8 @@ mod api;
 mod cashier;
 mod claude_config;
 mod desktop;
+#[cfg(windows)]
+mod desktop_code;
 #[cfg(any(target_os = "macos", test))]
 mod desktop_mac;
 #[cfg(windows)]

@@ -168,6 +168,18 @@ impl Paths {
         self.read_only.map_or(Ok(()), |why| Err(why.into()))
     }
 
+    #[cfg(windows)]
+    pub fn desktop_code_cache(&self, writing: bool) -> Result<PathBuf, String> {
+        if writing {
+            self.writable()?;
+        }
+        Ok(self
+            .library
+            .parent()
+            .ok_or("找不到 Claude Desktop 数据目录")?
+            .join("claude-code"))
+    }
+
     fn profile(&self, id: &str) -> PathBuf {
         self.library.join(format!("{id}.json"))
     }

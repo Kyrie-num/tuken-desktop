@@ -39,6 +39,8 @@ export function createMock(
     google = true,
     /** A computer without Claude Desktop yet. */
     noDesktop = false,
+    /** Desktop exists but its first-use Code download never completed. */
+    missingCode = false,
     /** Sign-up only with an invitation code, Google included. */
     inviteOnly = false,
     /** Daily check-in: on, off in the admin, or not on the server yet. */
@@ -147,6 +149,7 @@ export function createMock(
     desktop: {
       supported: true,
       installed: scenario !== "out" && !noDesktop,
+      code_ready: !noDesktop && !missingCode,
       version: "1.3.12",
       running: true,
       installing: false,
@@ -699,6 +702,7 @@ export function createMock(
         if (typeof installEnds === "object") throw installEnds.error;
         if (installEnds === "browser") return { method: "browser" };
         db.desktop.installed = true;
+        db.desktop.code_ready = true;
         return { method: platform === "macos" ? "dmg" : "msix" };
       case "mock:release_install":
         releaseInstall?.();

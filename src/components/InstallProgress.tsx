@@ -4,7 +4,9 @@ import { installText } from "@/lib/install";
 /** Separate, real download and installation percentages; never a fake timer. */
 export function InstallProgress({ step }: { step: InstallStep | null }) {
   const percent =
-    step?.step === "download" || step?.step === "install"
+    step?.step === "download" ||
+    step?.step === "install" ||
+    step?.step === "code_download"
       ? Math.max(0, Math.min(100, step.percent))
       : undefined;
   const label = installText(step) ?? "正在准备安装";

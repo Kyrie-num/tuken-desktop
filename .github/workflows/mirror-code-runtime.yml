@@ -59,11 +59,15 @@ jobs:
       - name: Verify the public mirror
         run: |
           python3 - <<'PY'
-          import hashlib, json, urllib.request
+          import hashlib, json, pathlib, subprocess
           for item in json.load(open('.github/claude-code-runtime.json')):
               url = f"https://download.tuken.site/claude-code-runtime/{item['version']}/{item['sha256']}/{item['platform']}/claude.exe.zst"
               digest, size = hashlib.sha256(), 0
-              with urllib.request.urlopen(url, timeout=120) as response:
+              # Match the existing download-site verification's HTTP client.
+              subprocess.run(['curl', '--fail', '--silent', '--show-error', '--retry', '3',
+                              '--retry-all-errors', '--connect-timeout', '20', '--max-time', '300',
+                              url, '--output', 'served.zst'], check=True)
+              with pathlib.Path('served.zst').open('rb') as response:
                   while chunk := response.read(1024 * 1024):
                       digest.update(chunk)
                       size += len(chunk)

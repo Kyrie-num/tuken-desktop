@@ -143,7 +143,10 @@ export function Setup() {
     "idle" | "busy" | "browser" | "failed"
   >("idle");
   const installed =
-    !!status?.installed && !status.installing && install !== "busy";
+    !!status?.installed &&
+    status.code_ready !== false &&
+    !status.installing &&
+    install !== "busy";
   const funded = balance !== undefined && balance > 0;
   const configured = !!status?.connected && !!status.models?.models.length;
   const step: Step = !installed

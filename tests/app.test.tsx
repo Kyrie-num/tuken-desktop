@@ -930,6 +930,19 @@ describe("兔啃", () => {
         "正在安装 68%",
       );
       expect(screen.queryByText("Claude Desktop 安装好了")).toBeNull();
+      await report({ step: "code_download", percent: 37 });
+      expect(screen.getByRole("progressbar")).toHaveAttribute(
+        "aria-valuenow",
+        "37",
+      );
+      expect(screen.getByRole("progressbar")).toHaveAttribute(
+        "aria-valuetext",
+        "正在下载 Claude Code 运行组件 37%",
+      );
+      await report({ step: "code_install" });
+      expect(screen.getByRole("progressbar")).not.toHaveAttribute(
+        "aria-valuenow",
+      );
       expect(calls(invoke, "open_link")).toHaveLength(0);
       await act(() => invoke("mock:release_install"));
       await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
@@ -951,6 +964,47 @@ describe("兔啃", () => {
     expect(screen.getByRole("button", { name: "一键安装" })).toBeEnabled();
     expect(calls(invoke, "open_link")).toHaveLength(0);
     expect(screen.queryByText("Claude Desktop 安装好了")).toBeNull();
+  });
+
+  it("repairs a connected desktop whose first-use Code download is missing", async () => {
+    const user = userEvent.setup();
+    const invoke = show("ok", { missingCode: true, holdInstall: true });
+    expect(
+      await screen.findByText("还缺 Claude Code 运行组件，补齐后才能开始对话"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "打开 Claude Desktop" }),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "修复运行组件" }));
+    await screen.findByRole("progressbar");
+    await act(() =>
+      invoke("mock:emit", {
+        event: "tuken://desktop-install",
+        payload: { step: "code_download", percent: 64 },
+      }),
+    );
+    expect(screen.getByRole("progressbar")).toHaveAttribute(
+      "aria-valuenow",
+      "64",
+    );
+    await act(() => invoke("mock:release_install"));
+    expect(
+      await screen.findByRole("button", { name: "打开 Claude Desktop" }),
+    ).toBeEnabled();
+    expect(calls(invoke, "open_link")).toHaveLength(0);
+  });
+
+  it("does not skip setup just because Desktop exists without its Code engine", async () => {
+    localStorage.removeItem(setupDone(1));
+    const user = userEvent.setup();
+    const invoke = show("in", { missingCode: true, holdInstall: true });
+    await user.click(await screen.findByRole("button", { name: "一键安装" }));
+    await screen.findByRole("progressbar");
+    expect(
+      invoke.mock.calls.filter(([cmd]) => cmd === "desktop_install"),
+    ).toHaveLength(1);
+    await act(() => invoke("mock:release_install"));
+    await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
   });
 
   describe("on macOS", () => {

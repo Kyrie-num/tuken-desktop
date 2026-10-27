@@ -146,6 +146,8 @@ export type DesktopStatus = {
   installing: boolean;
   /** Current Windows install stage, including after navigating back. */
   install_step?: InstallStep | null;
+  /** Windows desktop's separately downloaded Code engine is present. */
+  code_ready?: boolean | null;
   can_restart: boolean;
   /** Claude Desktop's applied gateway profile points at 兔啃. */
   connected: boolean;
@@ -211,13 +213,18 @@ export type InstallStep =
   | { step: "verify" }
   | { step: "permission" }
   | { step: "install"; percent: number }
+  | { step: "code_download"; percent: number }
+  | { step: "code_verify" }
+  | { step: "code_install" }
   | { step: "copy" };
 
 export const desktop = {
   status: () => invoke<DesktopStatus>("desktop_status"),
   /** `msix`: local Windows deployment; `dmg`/`browser`: macOS. */
   install: () =>
-    invoke<{ method: "msix" | "dmg" | "browser" | "none" }>("desktop_install"),
+    invoke<{ method: "msix" | "dmg" | "browser" | "none" | "runtime" }>(
+      "desktop_install",
+    ),
   open: (restart = false) => invoke<void>("desktop_open", { restart }),
   /** The default model goes first in `models`. */
   setModels: (models: string[], effort: Effort) =>
