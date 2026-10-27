@@ -1,0 +1,72 @@
+name: 同步 Claude Code 运行组件
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/claude-code-runtime.json"
+      - ".github/workflows/mirror-code-runtime.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-code-runtime-mirror
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # Hashes and sizes come from the manifest in Anthropic's signed Desktop
+      # packages. Keep the original compressed bytes and hash-specific URL.
+      - name: Download and verify the official components
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, re, urllib.request
+          for item in json.load(open('.github/claude-code-runtime.json')):
+              version, platform, sha = item['version'], item['platform'], item['sha256']
+              assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version)
+              assert platform == 'win32-x64' and re.fullmatch('[0-9a-f]{64}', sha)
+              path = pathlib.Path('runtime') / version / sha / platform / 'claude.exe.zst'
+              path.parent.mkdir(parents=True, exist_ok=True)
+              url = f'https://downloads.claude.ai/claude-code-releases/{version}/{platform}/claude.exe.zst'
+              digest, size = hashlib.sha256(), 0
+              with urllib.request.urlopen(url, timeout=120) as response, path.open('wb') as output:
+                  while chunk := response.read(1024 * 1024):
+                      size += len(chunk)
+                      assert size <= item['size'], 'unexpected file size'
+                      digest.update(chunk)
+                      output.write(chunk)
+              assert size == item['size'] and digest.hexdigest() == sha, 'checksum mismatch'
+              print(f'Verified official Claude Code {version}: {size} bytes, {sha}')
+          PY
+      - name: Publish verified bytes to the download mirror
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        run: |
+          aws s3 sync runtime s3://tuken-downloads/claude-code-runtime \
+            --endpoint-url "$R2" --only-show-errors \
+            --content-type application/octet-stream \
+            --cache-control 'public, max-age=31536000, immutable'
+      - name: Verify the public mirror
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, urllib.request
+          for item in json.load(open('.github/claude-code-runtime.json')):
+              url = f"https://download.tuken.site/claude-code-runtime/{item['version']}/{item['sha256']}/{item['platform']}/claude.exe.zst"
+              digest, size = hashlib.sha256(), 0
+              with urllib.request.urlopen(url, timeout=120) as response:
+                  while chunk := response.read(1024 * 1024):
+                      digest.update(chunk)
+                      size += len(chunk)
+              assert size == item['size'] and digest.hexdigest() == item['sha256']
+              print('Mirror verified:', item['version'])
+          PY

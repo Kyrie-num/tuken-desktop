@@ -1,0 +1,14 @@
+[
+  {
+    "version": "2.1.299",
+    "platform": "win32-x64",
+    "size": 95700039,
+    "sha256": "f0584be0fbaf0853072de7b532e6c4078f5d2c38ea70a4c711032408a78edd8a"
+  },
+  {
+    "version": "2.1.308",
+    "platform": "win32-x64",
+    "size": 106384354,
+    "sha256": "c17a819afb40d41ed558bacd5c432b52efdd004fe98068e6b47e77f540156bb9"
+  }
+]
