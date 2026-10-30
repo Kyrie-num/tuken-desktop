@@ -17,6 +17,7 @@ import {
   type AuthConfig,
   type Checkin,
   type CheckinHistory,
+  type Credit,
   type Invite,
   type SiteInfo,
   type Update,
@@ -84,6 +85,7 @@ export const qk = {
   update: ["update"] as const,
   announcements: (uid: number) => ["u", uid, "announcements"] as const,
   checkin: (uid: number) => ["u", uid, "checkin"] as const,
+  credit: (uid: number) => ["u", uid, "credit"] as const,
   invite: (uid: number) => ["u", uid, "invite"] as const,
   checkins: (uid: number, month: string) =>
     ["u", uid, "checkins", month] as const,
@@ -184,6 +186,16 @@ export function useCheckin(uid: number | null) {
   return useQuery({
     queryKey: qk.checkin(uid ?? 0),
     queryFn: () => tuken<Checkin>("checkin_status", { as_user: uid }),
+    enabled: !!uid,
+    staleTime: 60_000,
+  });
+}
+
+/** The balance's time-limited part, and whether a recharge earns a bonus. */
+export function useCredit(uid: number | null) {
+  return useQuery({
+    queryKey: qk.credit(uid ?? 0),
+    queryFn: () => tuken<Credit>("credit", { as_user: uid }),
     enabled: !!uid,
     staleTime: 60_000,
   });
@@ -349,6 +361,7 @@ export function refreshCredit(client: Client, uid: number | null) {
   for (const key of [
     qk.profile(uid),
     qk.dashboard(uid),
+    qk.credit(uid),
     ["u", uid, "history"],
     ["u", uid, "models"],
   ])

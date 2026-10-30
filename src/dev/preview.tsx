@@ -5,13 +5,17 @@
  * &desktop=none for a computer without Claude Desktop, &credit=none for an
  * account without credit (the setup shows until it is finished once);
  * &account=old for an account made long ago (no setup, no guide);
+ * &first=1 for an account that hasn't recharged yet (the first-recharge offer);
+ * &credit=none for a server without time-limited credit;
  * &os=mac for macOS (traffic lights drawn in, vibrancy over a wallpaper);
- * &quiet without the setup, the first-run guide and reward popups, for
- * screenshots.
+ * &quiet without the setup, the first-run guide, reward popups and the day's
+ * announcement, for screenshots.
  * The body stands in for the desktop wallpaper that Windows 11 Mica shows
  * through the window.
  */
 import { setupDone, tourSeen, TOUR } from "@/app/context";
+import { noticeDay } from "@/features/notice/Notices";
+import { beijingDate } from "@/lib/format";
 import { createMock, installMock, type Scenario } from "./mock";
 
 const params = new URLSearchParams(location.search);
@@ -21,6 +25,7 @@ if (params.has("quiet")) {
     localStorage.setItem(tourSeen(uid), TOUR);
     localStorage.setItem(setupDone(uid), "done");
     localStorage.setItem(`tuken-rewards-${uid}`, "999");
+    localStorage.setItem(noticeDay(uid), beijingDate(0));
   }
 }
 installMock(
@@ -31,6 +36,8 @@ installMock(
     noCredit: params.get("credit") === "none",
     platform: params.get("os") === "mac" ? "macos" : "windows",
     oldAccount: params.get("account") === "old",
+    firstRecharge: params.get("first") === "1",
+    credit: params.get("credit") === "none" ? "none" : "on",
   }),
 );
 

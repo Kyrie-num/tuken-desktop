@@ -133,6 +133,8 @@ export type CreditRow = {
   used_at?: string | null;
   created_at: string;
   notes?: string | null;
+  /** When time-limited credit (check-in) lapses. */
+  expires_at?: string | null;
 };
 export type Catalog = {
   goods: { id: string; name: string; price: number; stock: number }[];
@@ -179,6 +181,22 @@ export type Checkin =
       reward_min: number | null;
       reward_max: number | null;
       streak: number;
+      /** Days check-in credit stays usable; 0 or missing: for good. */
+      credit_days?: number | null;
+      /** Every this many days in a row earn `streak_reward` on top. */
+      streak_days?: number | null;
+      streak_reward?: number | null;
+    };
+/** Time-limited credit and the first-recharge offer. */
+export type Credit =
+  | { supported: false }
+  | {
+      supported: true;
+      /** The part of the balance that lapses, at most the balance. */
+      limited_total: number;
+      /** Soonest to lapse first. */
+      limited: { amount: number; expires_at: string; source: string }[];
+      first_recharge: { enabled: boolean; eligible: boolean; percent: number };
     };
 /** Inviting friends: my code, what an invite brings, and how it went. */
 export type Invite =
@@ -195,7 +213,7 @@ export type Invite =
 /** One month of check-ins: what each day brought. */
 export type CheckinHistory = {
   supported: boolean;
-  days: { date: string; reward: number | null }[];
+  days: { date: string; reward: number | null; bonus?: number | null }[];
 };
 /** How hard Claude thinks, lowest first, as Claude Desktop names them. */
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;

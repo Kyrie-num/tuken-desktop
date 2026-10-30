@@ -18,7 +18,9 @@ import {
   MOCK_TOTP,
   type Scenario,
 } from "@/dev/mock";
+import { noticeDay } from "@/features/notice/Notices";
 import { rewardsSeen } from "@/features/rewards/RewardNotice";
+import { beijingDate } from "@/lib/format";
 import { installText } from "@/lib/install";
 import { persistCache, restoreCache } from "@/lib/persist";
 import { loadPlatform } from "@/lib/platform";
@@ -60,6 +62,11 @@ beforeEach(() => {
   // Rewards on record have been shown already; their popup has its tests.
   localStorage.setItem(rewardsSeen(1), "999");
   localStorage.setItem(rewardsSeen(2), "999");
+  // Today's announcement has been looked at; the daily popup has its tests.
+  localStorage.setItem(noticeDay(1), beijingDate(0));
+  localStorage.setItem(noticeDay(2), beijingDate(0));
+  // The window is in front, not in the tray.
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
 });
 
 describe("兔啃", () => {
@@ -615,6 +622,53 @@ describe("兔啃", () => {
     expect(await screen.findByText("$28.60")).toBeInTheDocument();
   });
 
+  it("says how long check-in credit lasts and how far the streak reward is", async () => {
+    const user = userEvent.setup();
+    show("in");
+    // The balance says which part of it lapses, and when.
+    expect(
+      await screen.findByText(/^其中 \$0\.12 是限时额度，\d+月\d+日到期$/),
+    ).toBeInTheDocument();
+    await user.click(
+      await screen.findByRole("button", { name: "签到 +$0.10" }),
+    );
+    const sheet = await screen.findByRole("dialog", { name: "每日签到" });
+    expect(
+      await within(sheet).findByText(
+        "连续签到每满 7 天额外送 $1.00，再签 5 天就到",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(sheet).getByText("签到领的额度 7 天内有效，用的时候会先扣它"),
+    ).toBeInTheDocument();
+    await user.click(
+      within(sheet).getByRole("button", { name: "签到领 $0.10" }),
+    );
+    const toastTitle = await screen.findByText("签到成功，额度 +$0.10");
+    const toastEl = toastTitle.closest("[data-sonner-toast]") as HTMLElement;
+    expect(within(toastEl).getByText(/^\d+月\d+日到期$/)).toBeInTheDocument();
+    expect(
+      await within(sheet).findByText(
+        "连续签到每满 7 天额外送 $1.00，再签 4 天就到",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no time-limited credit on a server without it", async () => {
+    const user = userEvent.setup();
+    show("in", { credit: "none", firstRecharge: true });
+    await screen.findByText("$28.50");
+    await user.click(screen.getByRole("button", { name: "签到 +$0.10" }));
+    const sheet = await screen.findByRole("dialog", { name: "每日签到" });
+    await within(sheet).findByRole("button", { name: "签到领 $0.10" });
+    expect(within(sheet).queryByText(/有效|额外送/)).toBeNull();
+    expect(screen.queryByText(/限时额度/)).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "充值" }));
+    await screen.findByRole("radio", { name: "10刀额度" });
+    expect(screen.queryByText(/首次充值多送/)).toBeNull();
+  });
+
   it("hides check-in when it is off or not on the server", async () => {
     show("in", { checkin: "off" });
     await screen.findByText("$28.50");
@@ -757,6 +811,8 @@ describe("兔啃", () => {
     expect(screen.getByText("+$2.00")).toBeInTheDocument();
     expect(screen.getByText("签到奖励")).toBeInTheDocument();
     expect(screen.getByText("+$0.12")).toBeInTheDocument();
+    // Check-in credit lapses: its row says when.
+    expect(screen.getByText(/· \d+月\d+日到期/)).toBeInTheDocument();
     expect(screen.queryByText("invite")).not.toBeInTheDocument();
   });
 
@@ -879,6 +935,63 @@ describe("兔啃", () => {
     expect(
       await screen.findByText("+$10 已到账", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
+  }, 15_000);
+
+  it("offers the first-recharge bonus until the first recharge", async () => {
+    localStorage.setItem(rewardsSeen(1), "6");
+    const user = userEvent.setup();
+    show("in", { paidAfter: 1, firstRecharge: true });
+    await user.click(await screen.findByRole("button", { name: "充值" }));
+    expect(await screen.findByText("首次充值多送 20%")).toBeInTheDocument();
+    await user.click(await screen.findByRole("radio", { name: "10刀额度" }));
+    expect(await screen.findByText("首充多送 $2.00")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "支付宝付款" }));
+    expect(
+      await screen.findByText("+$10 已到账", {}, { timeout: 8000 }),
+    ).toBeInTheDocument();
+    // The bonus has its own popup, once the recharge sheet is closed.
+    expect(screen.queryByRole("dialog", { name: "首充奖励到账" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "好的" }));
+    const reward = await screen.findByRole(
+      "dialog",
+      { name: "首充奖励到账" },
+      { timeout: 5000 },
+    );
+    expect(within(reward).getByText("+$2.00")).toBeInTheDocument();
+    await user.click(within(reward).getByRole("button", { name: "好的" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Recharged now: no more offer.
+    await user.click(screen.getByRole("button", { name: "充值" }));
+    await screen.findByRole("radio", { name: "10刀额度" });
+    await waitFor(() => expect(screen.queryByText(/首次充值多送/)).toBeNull());
+  }, 30_000);
+
+  it("opens the newest unread announcement on the first look each day", async () => {
+    localStorage.removeItem(noticeDay(1));
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    const user = userEvent.setup();
+    show("in");
+    await screen.findByText("$28.50");
+    // Started in the tray: it waits for the window.
+    await new Promise((r) => setTimeout(r, 1600));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    focus.mockReturnValue(true);
+    window.dispatchEvent(new Event("focus"));
+    const sheet = await screen.findByRole(
+      "dialog",
+      { name: "公告" },
+      { timeout: 4000 },
+    );
+    expect(
+      within(sheet).getByText("Claude Opus 5.5 上线了"),
+    ).toBeInTheDocument();
+    expect(localStorage.getItem(noticeDay(1))).toBe(beijingDate(0));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Once a day: coming back to the window doesn't open it again.
+    window.dispatchEvent(new Event("focus"));
+    await new Promise((r) => setTimeout(r, 1600));
+    expect(screen.queryByRole("dialog")).toBeNull();
   }, 15_000);
 
   it("switches accounts from the account pill", async () => {

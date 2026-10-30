@@ -1,5 +1,6 @@
 import {
   CalendarCheck,
+  Clock,
   Gift,
   ReceiptText,
   UserPlus,
@@ -8,11 +9,12 @@ import {
 import {
   useAppState,
   useCheckin,
+  useCredit,
   useDashboard,
   useInvite,
   useProfile,
 } from "@/lib/queries";
-import { usd } from "@/lib/format";
+import { monthDay, usd } from "@/lib/format";
 import { Mascot } from "@/components/Mascot";
 import { useSession, useUi } from "@/app/context";
 
@@ -41,6 +43,19 @@ export function BalanceLens() {
   const invite = useInvite(uid);
   const inviting =
     invite.data?.supported && invite.data.enabled ? invite.data : null;
+  // Check-in credit that lapses: how much, and when the soonest goes.
+  const credit = useCredit(uid).data;
+  const limited =
+    credit?.supported && credit.limited_total > 0 && credit.limited.length
+      ? {
+          total: credit.limited_total,
+          first: credit.limited[0].expires_at,
+          later: credit.limited.some(
+            (l) =>
+              monthDay(l.expires_at) !== monthDay(credit.limited[0].expires_at),
+          ),
+        }
+      : null;
 
   return (
     <div className="relative isolate h-full">
@@ -89,6 +104,14 @@ export function BalanceLens() {
               <> · 冻结 {usd(profile.data?.frozen_balance)}</>
             )}
           </p>
+          {limited && (
+            <p className="mt-1 flex items-center gap-1.5 text-small text-ink/65">
+              <Clock size={13} className="shrink-0" aria-hidden="true" />
+              其中 {usd(limited.total)} 是限时额度，
+              {limited.later ? "最早 " : ""}
+              {monthDay(limited.first)}到期
+            </p>
+          )}
         </div>
         <div className="relative mt-6 flex flex-wrap items-center gap-2">
           <button

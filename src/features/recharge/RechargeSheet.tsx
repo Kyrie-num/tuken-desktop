@@ -1,14 +1,20 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Loader2 } from "lucide-react";
+import { Gift, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Mascot } from "@/components/Mascot";
 import { Sheet } from "@/components/Sheet";
 import { tuken, type AppState, type Order } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { cny, creditOf } from "@/lib/format";
-import { qk, refreshCredit, useCatalog, useQuote } from "@/lib/queries";
+import { cny, creditOf, usd } from "@/lib/format";
+import {
+  qk,
+  refreshCredit,
+  useCatalog,
+  useCredit,
+  useQuote,
+} from "@/lib/queries";
 import { useAction, useSession, useUi } from "@/app/context";
 
 /** How often an open payment asks whether it has been paid. */
@@ -39,6 +45,17 @@ export function RechargeSheet() {
   const channel =
     channels.find((c) => c.id === channelId)?.id ?? channels[0]?.id ?? null;
   const quote = useQuote(goodsId, channel);
+  // Only an account that hasn't recharged yet sees the first-recharge offer.
+  const offer = useCredit(uid).data;
+  const bonus =
+    offer?.supported &&
+    offer.first_recharge.enabled &&
+    offer.first_recharge.eligible &&
+    offer.first_recharge.percent > 0
+      ? offer.first_recharge.percent
+      : null;
+  const chosen = catalog.data?.goods.find((g) => g.id === goodsId);
+  const chosenCredit = chosen ? creditOf(chosen.name) : null;
   const [paying, setPaying] = useState<Order | null>(null);
   const [done, setDone] = useState<Order | null>(null);
   const action = useAction();
@@ -213,6 +230,15 @@ export function RechargeSheet() {
         </div>
       ) : (
         <>
+          {bonus !== null && (
+            <div className="mb-4 flex items-center gap-2.5 rounded-[18px] bg-ink/[0.045] px-4 py-3 text-body">
+              <Gift size={18} className="shrink-0" aria-hidden="true" />
+              <p>
+                <strong className="font-semibold">首次充值多送 {bonus}%</strong>
+                <span className="text-ink/65">，多送的额度永久有效</span>
+              </p>
+            </div>
+          )}
           {catalog.data ? (
             catalog.data.goods.length ? (
               <div
@@ -303,6 +329,11 @@ export function RechargeSheet() {
                   <strong className="font-display text-[22px] font-semibold text-ink tnum">
                     {cny(quote.data.total_amount)}
                   </strong>
+                  {bonus !== null && chosenCredit !== null && (
+                    <span className="ml-2 text-small text-ink/65">
+                      首充多送 {usd((chosenCredit * bonus) / 100)}
+                    </span>
+                  )}
                 </>
               )}
             </p>

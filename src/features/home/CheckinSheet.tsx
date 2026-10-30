@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Sheet } from "@/components/Sheet";
 import { tuken } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { beijingDate, usd } from "@/lib/format";
+import { beijingDate, monthDay, usd } from "@/lib/format";
 import {
   qk,
   refreshCredit,
@@ -59,19 +59,47 @@ export function CheckinSheet() {
     c && c.reward_min !== null && c.reward_min === c.reward_max
       ? usd(c.reward_min)
       : null;
+  // What each day brought, its streak reward included.
   const rewards = new Map(
-    (history.data?.days ?? []).map((d) => [d.date, d.reward]),
+    (history.data?.days ?? []).map((d) => [
+      d.date,
+      d.reward === null && !d.bonus ? null : (d.reward ?? 0) + (d.bonus ?? 0),
+    ]),
   );
+  // Every `streakDays` days in a row earn a reward on top: how far to the next.
+  const streakDays = c?.streak_days ?? 0;
+  const streakReward = c?.streak_reward ?? 0;
+  const left =
+    c && streakDays > 0 && streakReward > 0
+      ? streakDays - (c.streak % streakDays)
+      : null;
+  const streakNote =
+    left === null
+      ? null
+      : !c?.checked_in && left === 1
+        ? `今天签到，额外送 ${usd(streakReward)}`
+        : `连续签到每满 ${streakDays} 天额外送 ${usd(streakReward)}，再签 ${left} 天就到`;
+  const lifetime = c?.credit_days ?? 0;
 
   const checkIn = () =>
     action.run(async () => {
       try {
-        const r = await tuken<{ reward: number | null }>("checkin", {
-          as_user: uid,
+        const r = await tuken<{
+          reward: number | null;
+          streak: number;
+          streak_reward?: number | null;
+          expires_at?: string | null;
+        }>("checkin", { as_user: uid });
+        const total = (r.reward ?? 0) + (r.streak_reward ?? 0);
+        const notes = [
+          r.streak_reward
+            ? `含连续签到 ${r.streak} 天奖励 ${usd(r.streak_reward)}`
+            : "",
+          r.expires_at ? `${monthDay(r.expires_at)}到期` : "",
+        ].filter(Boolean);
+        toast.success(total ? `签到成功，额度 +${usd(total)}` : "签到成功", {
+          description: notes.length ? notes.join("，") : undefined,
         });
-        toast.success(
-          r.reward ? `签到成功，额度 +${usd(r.reward)}` : "签到成功",
-        );
         refreshCredit(client, uid);
       } finally {
         if (uid) {
@@ -171,6 +199,14 @@ export function CheckinSheet() {
             ? `签到领 ${fixed}`
             : "签到领额度"}
       </button>
+      {(streakNote || lifetime > 0) && (
+        <div className="mt-3 space-y-1 text-center text-small text-ink/60">
+          {streakNote && <p>{streakNote}</p>}
+          {lifetime > 0 && (
+            <p>签到领的额度 {lifetime} 天内有效，用的时候会先扣它</p>
+          )}
+        </div>
+      )}
     </Sheet>
   );
 }

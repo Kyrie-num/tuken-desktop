@@ -5,7 +5,7 @@ import { Mascot } from "@/components/Mascot";
 import { Segmented } from "@/components/Segmented";
 import type { CreditRow, Range } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { beijingDate, count, tokens, usd, when } from "@/lib/format";
+import { beijingDate, count, monthDay, tokens, usd, when } from "@/lib/format";
 import {
   fetchers,
   qk,
@@ -47,11 +47,26 @@ const creditType: Record<string, string> = {
   signup: "新用户奖励",
   invite: "邀请奖励",
   checkin: "签到奖励",
+  checkin_streak: "连续签到奖励",
+  checkin_expired: "签到额度到期",
+  first_recharge: "首充奖励",
 };
 
 /** Credits paid in dollars; the others count slots or days. */
 const inDollars = (type: string) =>
-  type.includes("balance") || ["signup", "invite", "checkin"].includes(type);
+  type.includes("balance") ||
+  type === "first_recharge" ||
+  ["signup", "invite"].includes(type) ||
+  type.startsWith("checkin");
+
+/** Check-in credit lapses: when, or that it has. */
+function lapse(r: CreditRow) {
+  if (!r.expires_at || !["checkin", "checkin_streak"].includes(r.type))
+    return "";
+  return Date.parse(r.expires_at) <= Date.now()
+    ? " · 已到期"
+    : ` · ${monthDay(r.expires_at)}到期`;
+}
 
 /** "+$50.00", "−$5.00" for a deduction, nothing for a code worth nothing. */
 function amount(r: CreditRow) {
@@ -275,6 +290,7 @@ function Credits() {
                 </p>
                 <p className="truncate text-caption text-ink/55">
                   {when(r.used_at ?? r.created_at)}
+                  {lapse(r)}
                   {r.notes ? ` · ${r.notes}` : ""}
                 </p>
               </div>

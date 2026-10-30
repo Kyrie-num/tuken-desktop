@@ -5,21 +5,22 @@ import { Sheet } from "@/components/Sheet";
 import type { CreditRow } from "@/lib/api";
 import { usd } from "@/lib/format";
 import { fetchers, qk, refreshCredit } from "@/lib/queries";
-import { useSession } from "@/app/context";
+import { useSession, useUi } from "@/app/context";
 
 /** The newest credit row this account has been told about, per computer. */
 export const rewardsSeen = (uid: number) => `tuken-rewards-${uid}`;
-const KINDS = ["signup", "invite"];
+const KINDS = ["signup", "invite", "first_recharge"];
 const DAY = 24 * 3600_000;
 
 /**
  * Pops up credit the account was given: the sign-up bonus right after
- * registering, and invite rewards as friends sign up, also while 兔啃 is
- * open. Each once.
+ * registering, invite rewards as friends sign up, also while 兔啃 is open,
+ * and the first-recharge bonus once the recharge sheet is closed. Each once.
  */
 export function RewardNotice() {
   const client = useQueryClient();
   const { uid } = useSession();
+  const { rechargeOpen } = useUi();
   const history = useQuery({
     queryKey: qk.history(uid ?? 0, 1),
     queryFn: () => fetchers.history(uid!, 1),
@@ -54,13 +55,20 @@ export function RewardNotice() {
 
   const signup = shown.filter((r) => r.type === "signup");
   const invites = shown.filter((r) => r.type === "invite");
+  const firsts = shown.filter((r) => r.type === "first_recharge");
   const total = shown.reduce((s, r) => s + Number(r.value), 0);
 
   return (
     <Sheet
-      open={shown.length > 0}
+      open={shown.length > 0 && !rechargeOpen}
       onOpenChange={(open) => !open && setShown([])}
-      title={signup.length ? "注册成功，送你额度" : "邀请奖励到账"}
+      title={
+        signup.length
+          ? "注册成功，送你额度"
+          : invites.length
+            ? "邀请奖励到账"
+            : "首充奖励到账"
+      }
       width={400}
     >
       <div className="flex flex-col items-center pb-1 text-center">
@@ -80,6 +88,7 @@ export function RewardNotice() {
               邀请奖励已到账。
             </p>
           )}
+          {firsts.length > 0 && <p>第一次充值多送的额度已到账，永久有效。</p>}
         </div>
         <button
           type="button"

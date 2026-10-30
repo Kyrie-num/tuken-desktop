@@ -13,6 +13,8 @@ const beijingDay = (n: number) =>
 
 const hoursAgo = (h: number) =>
   new Date(Date.now() - h * 3600_000).toISOString();
+/** How long check-in credit stays usable on the mock server. */
+const CREDIT_DAYS = 7;
 const LONG_AGO = "2026-09-01T08:00:00Z";
 
 /** The mock's sign-in: this password for every account, these codes. */
@@ -45,6 +47,10 @@ export function createMock(
     inviteOnly = false,
     /** Daily check-in: on, off in the admin, or not on the server yet. */
     checkin = "on" as "on" | "off" | "none",
+    /** Time-limited credit and the first-recharge offer, or a server without them. */
+    credit = "on" as "on" | "none",
+    /** The account hasn't recharged yet: its first recharge earns 20% on top. */
+    firstRecharge = false,
     /** The system the app runs on. */
     platform = "windows" as "windows" | "macos",
     /** The first account was made long ago, not just now. */
@@ -115,6 +121,7 @@ export function createMock(
           status: "used",
           used_at: hoursAgo(20),
           created_at: hoursAgo(20),
+          expires_at: hoursAgo(20 - CREDIT_DAYS * 24),
         },
         {
           id: 3,
@@ -170,6 +177,15 @@ export function createMock(
     },
     google: null as null | ((v: unknown) => void),
     checkedIn: false,
+    /** Live time-limited credit, soonest to lapse first. */
+    limited: [
+      {
+        amount: 0.12,
+        expires_at: hoursAgo(20 - CREDIT_DAYS * 24),
+        source: "checkin",
+      },
+    ],
+    firstRecharge,
     /** Starting with the computer, off until switched on. */
     autostart: false,
     notices: [
@@ -494,7 +510,23 @@ export function createMock(
         if (o?.status === "redeeming") {
           o.status = "completed";
           o.message = "额度已到账";
-          me().balance += Number(/(\d+)/.exec(o.name)?.[1] ?? 0);
+          const value = Number(/(\d+)/.exec(o.name)?.[1] ?? 0);
+          me().balance += value;
+          const credited = (type: string, amount: number) =>
+            db.credits.unshift({
+              id: db.credits[0].id + 1,
+              type,
+              value: amount,
+              status: "used",
+              used_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+            });
+          credited("balance", value);
+          if (credit === "on" && db.firstRecharge) {
+            db.firstRecharge = false;
+            me().balance += value * 0.2;
+            credited("first_recharge", value * 0.2);
+          }
         } else if (
           o?.status === "awaiting_payment" &&
           db.payPolls >= paidAfter
@@ -561,6 +593,9 @@ export function createMock(
           reward_min: 0.1,
           reward_max: 0.1,
           streak: db.checkedIn ? 3 : 2,
+          ...(credit === "on"
+            ? { credit_days: CREDIT_DAYS, streak_days: 7, streak_reward: 1 }
+            : {}),
         };
       case "checkin_history": {
         const days = [3, 2, 1]
@@ -574,7 +609,38 @@ export function createMock(
         if (db.checkedIn) throw "今天已经签到过了";
         db.checkedIn = true;
         a.balance = Math.round((a.balance + 0.1) * 100) / 100;
-        return { reward: 0.1, streak: 3 };
+        if (credit !== "on") return { reward: 0.1, streak: 3 };
+        {
+          const lapse = new Date(
+            Date.now() + CREDIT_DAYS * 864e5,
+          ).toISOString();
+          db.limited.push({
+            amount: 0.1,
+            expires_at: lapse,
+            source: "checkin",
+          });
+          return {
+            reward: 0.1,
+            streak: 3,
+            streak_reward: null,
+            expires_at: lapse,
+          };
+        }
+      case "credit":
+        if (credit !== "on") return { supported: false };
+        return {
+          supported: true,
+          limited_total: Math.min(
+            a.balance,
+            db.limited.reduce((sum, l) => sum + l.amount, 0),
+          ),
+          limited: db.limited,
+          first_recharge: {
+            enabled: true,
+            eligible: db.firstRecharge,
+            percent: 20,
+          },
+        };
       case "groups":
         return groups;
       case "models":

@@ -104,6 +104,15 @@ export function initial(text?: string | null) {
 }
 
 /** "2026年9月1日" in Beijing time. */
+/** "11月7日", Beijing time, for dates within the coming weeks. */
+export function monthDay(value: unknown) {
+  if (!value) return "—";
+  const d = new Date(String(value));
+  return Number.isNaN(d.getTime())
+    ? "—"
+    : beijing({ month: "long", day: "numeric" }).format(d);
+}
+
 export function day(value: unknown) {
   if (!value) return "—";
   const d = new Date(String(value));

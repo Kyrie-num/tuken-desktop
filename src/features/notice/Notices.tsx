@@ -1,12 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Bell } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
 import { Sheet } from "@/components/Sheet";
-import { tuken, type Announcements } from "@/lib/api";
-import { day } from "@/lib/format";
-import { qk, useAnnouncements } from "@/lib/queries";
-import { useSession, useUi } from "@/app/context";
+import { tuken, type Announcement, type Announcements } from "@/lib/api";
+import { beijingDate, day } from "@/lib/format";
+import { qk, useAnnouncements, useProfile } from "@/lib/queries";
+import { isNewAccount, tourDone, useSession, useUi } from "@/app/context";
 
 /** The bell in the title bar, with a dot while something is unread. */
 export function NoticeBell() {
@@ -34,12 +34,21 @@ export function NoticeBell() {
   );
 }
 
-/** The site's announcements; an important new one opens by itself once. */
+/** The Beijing day an account last had its newest announcement checked. */
+export const noticeDay = (uid: number) => `tuken-notice-day-${uid}`;
+
+/**
+ * The site's announcements. The first time 兔啃 is in front each day, the
+ * newest one opens by itself unless it has been read; an important ("popup")
+ * unread one opens by itself once per run too. Neither while 兔啃 sits in the
+ * tray, nor before a new account has been through the guide.
+ */
 export function NoticesSheet() {
   const client = useQueryClient();
   const { uid } = useSession();
-  const { noticesOpen, setNoticesOpen } = useUi();
+  const { noticesOpen, setNoticesOpen, setup, tour } = useUi();
   const { data, refetch } = useAnnouncements(uid);
+  const profile = useProfile(uid).data;
   const items = data?.items ?? [];
 
   // Opening the list asks for anything new.
@@ -47,16 +56,42 @@ export function NoticesSheet() {
     if (noticesOpen) void refetch();
   }, [noticesOpen, refetch]);
 
-  const popped = useRef(false);
-  const urgent = items.some((a) => a.popup && !a.read);
+  // Coming to the window, or a dialog in the way closing, looks again.
+  const [tick, setTick] = useState(0);
   useEffect(() => {
-    if (popped.current || !urgent) return;
-    popped.current = true;
+    const again = () => setTick((n) => n + 1);
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+  }, []);
+  const popped = useRef(false);
+  useEffect(() => {
+    if (!uid || !data?.supported || setup !== "done" || tour !== null) return;
+    if (!profile || (isNewAccount(profile.created_at) && !tourDone(uid)))
+      return;
+    if (!document.hasFocus()) return;
+    const today = beijingDate(0);
+    const newest = data.items.reduce<Announcement | null>(
+      (a, b) => (!a || b.id > a.id ? b : a),
+      null,
+    );
+    const daily = localStorage.getItem(noticeDay(uid)) !== today;
+    const urgent =
+      !popped.current && data.items.some((a) => a.popup && !a.read);
+    if (!urgent && !(daily && newest && !newest.read)) {
+      if (daily) localStorage.setItem(noticeDay(uid), today);
+      return;
+    }
     const t = window.setTimeout(() => {
-      if (!document.querySelector('[role="dialog"]')) setNoticesOpen(true);
+      if (document.querySelector('[role="dialog"]')) {
+        setTick((n) => n + 1);
+        return;
+      }
+      popped.current = true;
+      localStorage.setItem(noticeDay(uid), today);
+      setNoticesOpen(true);
     }, 1200);
     return () => window.clearTimeout(t);
-  }, [urgent, setNoticesOpen]);
+  }, [uid, data, profile, setup, tour, tick, setNoticesOpen]);
 
   // What is on screen in the open list counts as read.
   useEffect(() => {

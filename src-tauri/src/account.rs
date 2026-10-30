@@ -240,6 +240,8 @@ fn history_view(r: &Value) -> Value {
         "used_at": r["used_at"],
         "created_at": r["created_at"],
         "notes": r["notes"],
+        // When time-limited credit (check-in) lapses.
+        "expires_at": r["expires_at"],
     })
 }
 
@@ -834,6 +836,43 @@ async fn account_action(
                 "reward_min": api::number(&c["reward_min"]),
                 "reward_max": api::number(&c["reward_max"]),
                 "streak": c["streak"].as_i64().unwrap_or(0),
+                // Days check-in credit stays usable (0: for good), and the
+                // extra reward every `streak_days` days in a row.
+                "credit_days": c["credit_days"].as_i64(),
+                "streak_days": c["streak_days"].as_i64(),
+                "streak_reward": api::number(&c["streak_reward"]),
+            }))
+        }
+        "credit" => {
+            let Some(c) = call_optional(state, account, "/credit", Method::GET, None).await? else {
+                return Ok(json!({ "supported": false }));
+            };
+            let limited: Vec<Value> = c["limited"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .take(100)
+                        .map(|l| {
+                            json!({
+                                "amount": api::number(&l["amount"]).unwrap_or(0.0),
+                                "expires_at": l["expires_at"].as_str(),
+                                "source": l["source"].as_str(),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let first = &c["first_recharge"];
+            Ok(json!({
+                "supported": true,
+                "limited_total": api::number(&c["limited_total"]).unwrap_or(0.0),
+                "limited": limited,
+                "first_recharge": {
+                    "enabled": first["enabled"] == true,
+                    "eligible": first["eligible"] == true,
+                    "percent": api::number(&first["percent"]).unwrap_or(0.0),
+                },
             }))
         }
         "checkin_history" => {
@@ -847,7 +886,11 @@ async fn account_action(
                     days.iter()
                         .filter_map(|d| {
                             let date = d["date"].as_str().filter(|s| s.len() == 10)?;
-                            Some(json!({ "date": date, "reward": api::number(&d["reward"]) }))
+                            Some(json!({
+                                "date": date,
+                                "reward": api::number(&d["reward"]),
+                                "bonus": api::number(&d["bonus"]),
+                            }))
                         })
                         .take(31)
                         .collect()
@@ -862,6 +905,8 @@ async fn account_action(
             Ok(json!({
                 "reward": api::number(&r["reward"]),
                 "streak": r["streak"].as_i64().unwrap_or(0),
+                "streak_reward": api::number(&r["streak_reward"]),
+                "expires_at": r["expires_at"].as_str(),
             }))
         }
         "profile" => {
