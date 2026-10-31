@@ -51,6 +51,8 @@ export function createMock(
     credit = "on" as "on" | "none",
     /** The account hasn't recharged yet: its first recharge earns 20% on top. */
     firstRecharge = false,
+    /** Check-in credit from a week of days, lapsing today, tomorrow and later. */
+    manyLapses = false,
     /** The system the app runs on. */
     platform = "windows" as "windows" | "macos",
     /** The first account was made long ago, not just now. */
@@ -178,13 +180,14 @@ export function createMock(
     google: null as null | ((v: unknown) => void),
     checkedIn: false,
     /** Live time-limited credit, soonest to lapse first. */
-    limited: [
-      {
-        amount: 0.12,
-        expires_at: hoursAgo(20 - CREDIT_DAYS * 24),
-        source: "checkin",
-      },
-    ],
+    limited: (manyLapses
+      ? [-1, -22, -70, -118, -166]
+      : [20 - CREDIT_DAYS * 24]
+    ).map((h, i) => ({
+      amount: i ? 0.1 : 0.12,
+      expires_at: hoursAgo(h),
+      source: "checkin",
+    })),
     firstRecharge,
     /** Starting with the computer, off until switched on. */
     autostart: false,
@@ -630,6 +633,7 @@ export function createMock(
         if (credit !== "on") return { supported: false };
         return {
           supported: true,
+          balance: a.balance,
           limited_total: Math.min(
             a.balance,
             db.limited.reduce((sum, l) => sum + l.amount, 0),

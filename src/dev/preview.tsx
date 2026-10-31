@@ -7,6 +7,7 @@
  * &account=old for an account made long ago (no setup, no guide);
  * &first=1 for an account that hasn't recharged yet (the first-recharge offer);
  * &credit=none for a server without time-limited credit;
+ * &lapse=many for check-in credit lapsing today, tomorrow and later;
  * &os=mac for macOS (traffic lights drawn in, vibrancy over a wallpaper);
  * &quiet without the setup, the first-run guide, reward popups and the day's
  * announcement, for screenshots.
@@ -38,6 +39,7 @@ installMock(
     oldAccount: params.get("account") === "old",
     firstRecharge: params.get("first") === "1",
     credit: params.get("credit") === "none" ? "none" : "on",
+    manyLapses: params.get("lapse") === "many",
   }),
 );
 

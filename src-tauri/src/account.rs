@@ -866,6 +866,7 @@ async fn account_action(
             let first = &c["first_recharge"];
             Ok(json!({
                 "supported": true,
+                "balance": api::number(&c["balance"]),
                 "limited_total": api::number(&c["limited_total"]).unwrap_or(0.0),
                 "limited": limited,
                 "first_recharge": {

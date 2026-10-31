@@ -625,10 +625,13 @@ describe("兔啃", () => {
   it("says how long check-in credit lasts and how far the streak reward is", async () => {
     const user = userEvent.setup();
     show("in");
-    // The balance says which part of it lapses, and when.
-    expect(
-      await screen.findByText(/^其中 \$0\.12 是限时额度，\d+月\d+日到期$/),
-    ).toBeInTheDocument();
+    // The balance comes in two parts: credit that stays, and check-in credit
+    // that lapses, which is spent first, and when it lapses.
+    const lasting = (await screen.findByText("永久额度")).parentElement!;
+    expect(within(lasting).getByText("$28.38")).toBeInTheDocument();
+    const lapsing = screen.getByText("限时额度 · 优先使用").parentElement!;
+    expect(within(lapsing).getByText("$0.12")).toBeInTheDocument();
+    expect(within(lapsing).getByText(/^[67] 天后过期$/)).toBeInTheDocument();
     await user.click(
       await screen.findByRole("button", { name: "签到 +$0.10" }),
     );
@@ -647,6 +650,9 @@ describe("兔啃", () => {
     const toastTitle = await screen.findByText("签到成功，额度 +$0.10");
     const toastEl = toastTitle.closest("[data-sonner-toast]") as HTMLElement;
     expect(within(toastEl).getByText(/^\d+月\d+日到期$/)).toBeInTheDocument();
+    // It joins the part that lapses; the part that stays is as it was.
+    expect(await within(lapsing).findByText("$0.22")).toBeInTheDocument();
+    expect(within(lasting).getByText("$28.38")).toBeInTheDocument();
     expect(
       await within(sheet).findByText(
         "连续签到每满 7 天额外送 $1.00，再签 4 天就到",

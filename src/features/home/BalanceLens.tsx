@@ -1,12 +1,14 @@
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   CalendarCheck,
-  Clock,
   Gift,
   ReceiptText,
   UserPlus,
   Wallet,
 } from "lucide-react";
 import {
+  qk,
   useAppState,
   useCheckin,
   useCredit,
@@ -14,7 +16,8 @@ import {
   useInvite,
   useProfile,
 } from "@/lib/queries";
-import { monthDay, usd } from "@/lib/format";
+import { usd } from "@/lib/format";
+import { lapseLines, splitBalance } from "@/lib/credit";
 import { Mascot } from "@/components/Mascot";
 import { useSession, useUi } from "@/app/context";
 
@@ -43,19 +46,23 @@ export function BalanceLens() {
   const invite = useInvite(uid);
   const inviting =
     invite.data?.supported && invite.data.enabled ? invite.data : null;
-  // Check-in credit that lapses: how much, and when the soonest goes.
+  // The balance in two parts: credit that stays, and check-in credit that
+  // lapses, which is spent first. Both from one summary of the balance,
+  // fetched again whenever the balance is, so the parts keep adding up.
+  const client = useQueryClient();
+  useEffect(() => {
+    if (uid && profile.dataUpdatedAt)
+      void client.invalidateQueries(
+        { queryKey: qk.credit(uid) },
+        { cancelRefetch: false },
+      );
+  }, [client, uid, profile.dataUpdatedAt]);
   const credit = useCredit(uid).data;
-  const limited =
-    credit?.supported && credit.limited_total > 0 && credit.limited.length
-      ? {
-          total: credit.limited_total,
-          first: credit.limited[0].expires_at,
-          later: credit.limited.some(
-            (l) =>
-              monthDay(l.expires_at) !== monthDay(credit.limited[0].expires_at),
-          ),
-        }
+  const split =
+    credit?.supported && balance !== undefined
+      ? splitBalance(credit.balance ?? balance, credit)
       : null;
+  const lapses = split ? lapseLines(split.lapses) : [];
 
   return (
     <div className="relative isolate h-full">
@@ -104,13 +111,28 @@ export function BalanceLens() {
               <> · 冻结 {usd(profile.data?.frozen_balance)}</>
             )}
           </p>
-          {limited && (
-            <p className="mt-1 flex items-center gap-1.5 text-small text-ink/65">
-              <Clock size={13} className="shrink-0" aria-hidden="true" />
-              其中 {usd(limited.total)} 是限时额度，
-              {limited.later ? "最早 " : ""}
-              {monthDay(limited.first)}到期
-            </p>
+          {split && split.limited > 0 && (
+            <dl className="mt-4 grid grid-cols-2 gap-x-6 text-small">
+              <div>
+                <dt className="text-ink/60">永久额度</dt>
+                <dd className="mt-0.5 text-strong font-semibold tnum">
+                  {usd(split.permanent)}
+                </dd>
+                <dd className="text-ink/60">不会过期</dd>
+              </div>
+              <div>
+                <dt className="text-ink/60">限时额度 · 优先使用</dt>
+                <dd className="mt-0.5 text-strong font-semibold tnum">
+                  {usd(split.limited)}
+                </dd>
+                {lapses.map((l) => (
+                  <dd key={l.key} className="text-ink/60 tnum">
+                    {lapses.length > 1 && `${usd(l.amount)} `}
+                    {l.text}
+                  </dd>
+                ))}
+              </div>
+            </dl>
           )}
         </div>
         <div className="relative mt-6 flex flex-wrap items-center gap-2">

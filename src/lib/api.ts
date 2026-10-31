@@ -192,6 +192,8 @@ export type Credit =
   | { supported: false }
   | {
       supported: true;
+      /** The balance this summary is of. */
+      balance?: number | null;
       /** The part of the balance that lapses, at most the balance. */
       limited_total: number;
       /** Soonest to lapse first. */
