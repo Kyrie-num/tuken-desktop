@@ -822,6 +822,40 @@ describe("兔啃", () => {
     expect(screen.queryByText("invite")).not.toBeInTheDocument();
   });
 
+  it("charts tokens per day and says which credit paid each call", async () => {
+    const user = userEvent.setup();
+    const invoke = show("in");
+    await screen.findByText("$28.50");
+    await user.click(screen.getByRole("tab", { name: "账单" }));
+    // Each call says which credit paid it, where the server recorded it.
+    expect(await screen.findAllByText("限时额度")).toHaveLength(3);
+    expect(screen.getAllByText("永久额度")).toHaveLength(6);
+    expect(
+      screen.getByText(/^限时 \$0\.\d{4} · 永久 \$0\.\d{4}$/),
+    ).toBeInTheDocument();
+    // Tokens per day of the week; screen readers get every day as a table.
+    const table = await screen.findByRole("table", { name: "每天用的 Token" });
+    expect(within(table).getAllByRole("row")).toHaveLength(8);
+    expect(calls(invoke, "usage_trend").at(-1)).toMatchObject({
+      granularity: "day",
+    });
+    // The arrow keys walk the days, starting from today.
+    const chart = screen.getByRole("group", { name: /每天用的 Token/ });
+    act(() => chart.focus());
+    const tip = within(chart.parentElement!);
+    const today = tip.getByRole("status").textContent;
+    expect(today).toMatch(/\d+月\d+日 周./);
+    await user.keyboard("{ArrowLeft}");
+    expect(tip.getByRole("status").textContent).not.toBe(today);
+    // Today goes by the hour.
+    await user.click(screen.getByRole("button", { name: "今天" }));
+    await waitFor(() =>
+      expect(calls(invoke, "usage_trend").at(-1)).toMatchObject({
+        granularity: "hour",
+      }),
+    );
+  });
+
   it("only reads when it opens: no key, order, install or Claude Desktop change", async () => {
     const invoke = show("in");
     await screen.findByText("$28.50");

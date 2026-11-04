@@ -14,6 +14,9 @@
   --orange: 237 108 0;
   --cyan: 43 183 179;
   --cyan-ink: 16 128 124;
+  /* Chart columns: a mid step of the ink hue (OKLCH L 0.60, C 0.105), checked
+     for lightness, chroma and 3:1 contrast against the glass surface. */
+  --chart: 0 147 153;
   --danger: 205 61 56;
   --glass: 255 255 255;
   --base: 233 243 242;
@@ -41,6 +44,7 @@ html[data-platform="macos"] {
   --orange: 255 138 42;
   --cyan: 64 206 200;
   --cyan-ink: 98 222 216;
+  --chart: 28 152 160;
   --danger: 255 112 104;
   --glass: 24 58 62;
   --base: 6 26 29;

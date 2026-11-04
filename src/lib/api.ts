@@ -115,7 +115,27 @@ export type UsageRow = {
   first_token_ms?: number | null;
   stream?: boolean;
   created_at: string;
+  /** What time-limited credit paid of `actual_cost` (permanent credit the
+   *  rest); null or absent where the server didn't record it. */
+  limited_cost?: number | null;
 };
+/** Tokens per day, or per hour for a one-day range (Beijing time), oldest first. */
+export type UsageTrend =
+  | { supported: false }
+  | {
+      supported: true;
+      points: {
+        /** "2026-10-31", or "2026-10-31 14:00" by the hour. Empty ones are left out. */
+        date: string;
+        requests: number;
+        input_tokens: number;
+        output_tokens: number;
+        cache_creation_tokens: number;
+        cache_read_tokens: number;
+        total_tokens: number;
+        actual_cost: number;
+      }[];
+    };
 export type UsageStats = {
   total_requests?: number;
   total_tokens?: number;

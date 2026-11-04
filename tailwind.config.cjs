@@ -10,6 +10,7 @@ module.exports = {
         orange: "rgb(var(--orange) / <alpha-value>)",
         cyan: "rgb(var(--cyan) / <alpha-value>)",
         "cyan-ink": "rgb(var(--cyan-ink) / <alpha-value>)",
+        chart: "rgb(var(--chart) / <alpha-value>)",
         danger: "rgb(var(--danger) / <alpha-value>)",
         glass: "rgb(var(--glass) / <alpha-value>)",
         base: "rgb(var(--base) / <alpha-value>)",

@@ -971,7 +971,84 @@ async fn account_action(
                 ("timezone", "Asia/Shanghai".into()),
             ]);
             let data = call(state, account, &format!("/usage?{q}"), Method::GET, None).await?;
-            Ok(paged(&data, usage_view))
+            let mut lines = paged(&data, usage_view);
+            // Which credit paid each line: time-limited credit took
+            // `limited_cost` of it, permanent credit the rest; null where the
+            // server didn't record it.
+            let ids: Vec<String> = lines["items"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|u| u["id"].as_i64())
+                        .map(|id| id.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !ids.is_empty() {
+                let path = format!("/usage/credit?ids={}", ids.join(","));
+                if let Ok(Some(paid)) =
+                    call_optional(state, account, &path, Method::GET, None).await
+                {
+                    if let Some(items) = lines["items"].as_array_mut() {
+                        for u in items {
+                            let id = u["id"]
+                                .as_i64()
+                                .map(|id| id.to_string())
+                                .unwrap_or_default();
+                            u["limited_cost"] = api::number(&paid["items"][id.as_str()])
+                                .map_or(Value::Null, Value::from);
+                        }
+                    }
+                }
+            }
+            Ok(lines)
+        }
+        "usage_trend" => {
+            let granularity = if input["granularity"].as_str() == Some("hour") {
+                "hour"
+            } else {
+                "day"
+            };
+            let q = query(&[
+                ("start_date", date(input, "start_date")),
+                ("end_date", date(input, "end_date")),
+                ("timezone", "Asia/Shanghai".into()),
+                ("granularity", granularity.into()),
+            ]);
+            let Some(data) = call_optional(
+                state,
+                account,
+                &format!("/usage/dashboard/trend?{q}"),
+                Method::GET,
+                None,
+            )
+            .await?
+            else {
+                return Ok(json!({ "supported": false }));
+            };
+            let points: Vec<Value> = data["trend"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .take(800)
+                        .map(|p| {
+                            json!({
+                                "date": p["date"].as_str(),
+                                "requests": p["requests"],
+                                "input_tokens": p["input_tokens"],
+                                "output_tokens": p["output_tokens"],
+                                "cache_creation_tokens": p["cache_creation_tokens"],
+                                "cache_read_tokens": p["cache_read_tokens"],
+                                "total_tokens": p["total_tokens"],
+                                "actual_cost": p["actual_cost"],
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(json!({ "supported": true, "points": points }))
         }
         "usage_stats" => {
             let q = query(&[

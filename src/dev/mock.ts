@@ -281,7 +281,77 @@ export function createMock(
       actual_cost: Number(((input * 3 + output * 15) / 1e6).toFixed(6)),
       created_at: hoursAgo(i * 4.5 + 0.2),
     };
-  });
+  }).map((u, i) => ({
+    ...u,
+    // Which credit paid: time-limited, both, permanent, then not recorded.
+    limited_cost:
+      credit !== "on"
+        ? undefined
+        : i < 3
+          ? u.actual_cost
+          : i === 3
+            ? Number((u.actual_cost * 0.6).toFixed(6))
+            : i < 10
+              ? 0
+              : null,
+  }));
+  /** Believable tokens per day (or hour) of a range, the same for the same date. */
+  const trendOf = (start: string, end: string) => {
+    const keys: string[] = [];
+    if (start === end) {
+      // Hours of today up to now; a past day has all 24.
+      const hour = Number(
+        new Intl.DateTimeFormat("en-GB", {
+          timeZone: "Asia/Shanghai",
+          hour: "2-digit",
+          hourCycle: "h23",
+        }).format(new Date()),
+      );
+      const last = end === beijingDay(0) ? hour : 23;
+      for (let h = 0; h <= last; h++)
+        keys.push(`${start} ${String(h).padStart(2, "0")}:00`);
+    } else {
+      for (
+        let t = Date.parse(`${start}T00:00:00Z`);
+        t <= Date.parse(`${end}T00:00:00Z`);
+        t += 864e5
+      )
+        keys.push(new Date(t).toISOString().slice(0, 10));
+    }
+    const points = keys
+      .map((date) => {
+        const seed = [...date].reduce(
+          (s, c) => (s * 31 + c.charCodeAt(0)) % 9973,
+          7,
+        );
+        if (seed % 6 === 0) return null;
+        const scale = date.length > 10 ? 0.08 : 1;
+        const input_tokens = Math.round((40_000 + (seed % 97) * 3_100) * scale);
+        const output_tokens = Math.round((6_000 + (seed % 89) * 420) * scale);
+        const cache_read_tokens = Math.round(
+          (seed % 3 ? 300_000 + (seed % 71) * 21_000 : 0) * scale,
+        );
+        return {
+          date,
+          requests: Math.max(1, Math.round((8 + (seed % 37)) * scale * 3)),
+          input_tokens,
+          output_tokens,
+          cache_creation_tokens: 0,
+          cache_read_tokens,
+          total_tokens: input_tokens + output_tokens + cache_read_tokens,
+          actual_cost: Number(
+            (
+              (input_tokens * 3 +
+                output_tokens * 15 +
+                cache_read_tokens * 0.3) /
+              1e6
+            ).toFixed(4),
+          ),
+        };
+      })
+      .filter((p) => p !== null);
+    return points;
+  };
   const me = () => db.accounts.find((a) => a.user_id === db.active)!;
   const view = () => ({
     active: db.active,
@@ -659,14 +729,22 @@ export function createMock(
         };
       case "usage":
         return page(usage, input.page ?? 1);
-      case "usage_stats":
+      case "usage_stats": {
+        // The same days as the chart, so the totals agree with it.
+        const points = trendOf(input.start_date, input.end_date);
+        const sum = (f: (p: (typeof points)[number]) => number) =>
+          points.reduce((t, p) => t + f(p), 0);
         return {
-          total_requests: usage.length,
-          total_tokens: usage.reduce(
-            (s, u) => s + u.input_tokens + u.output_tokens,
-            0,
-          ),
-          total_actual_cost: usage.reduce((s, u) => s + u.actual_cost, 0),
+          total_requests: sum((p) => p.requests),
+          total_tokens: sum((p) => p.total_tokens),
+          total_actual_cost: sum((p) => p.actual_cost),
+        };
+      }
+      case "usage_trend":
+        if (credit !== "on") return { supported: false };
+        return {
+          supported: true,
+          points: trendOf(input.start_date, input.end_date),
         };
       case "recharge_history":
         return page(db.credits, input.page ?? 1);

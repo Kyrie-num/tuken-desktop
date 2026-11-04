@@ -32,6 +32,7 @@ import {
   type Range,
   type UsageRow,
   type UsageStats,
+  type UsageTrend,
 } from "./api";
 import { beijingDate } from "./format";
 
@@ -101,6 +102,8 @@ export const qk = {
     ["u", uid, "usage", r.start_date, r.end_date, page] as const,
   usageStats: (uid: number, r: Range) =>
     ["u", uid, "usage_stats", r.start_date, r.end_date] as const,
+  usageTrend: (uid: number, r: Range) =>
+    ["u", uid, "usage_trend", r.start_date, r.end_date] as const,
   history: (uid: number, page: number) => ["u", uid, "history", page] as const,
 };
 
@@ -118,6 +121,13 @@ export const fetchers = {
   usage: (uid: number, r: Range, page: number) =>
     as<Page<UsageRow>>(uid, "usage", { ...r, page }),
   usageStats: (uid: number, r: Range) => as<UsageStats>(uid, "usage_stats", r),
+  /** By the hour for a one-day range, by the day otherwise; with the range
+   *  it is of, as a previous range's chart stays up while the next loads. */
+  usageTrend: (uid: number, r: Range) =>
+    as<UsageTrend>(uid, "usage_trend", {
+      ...r,
+      granularity: r.start_date === r.end_date ? "hour" : "day",
+    }).then((t) => ({ ...t, range: r })),
   history: (uid: number, page: number) =>
     as<Page<CreditRow>>(uid, "recharge_history", { page }),
 };
@@ -299,6 +309,15 @@ export function useUsageStats(uid: number | null, r: Range) {
   return useQuery({
     queryKey: qk.usageStats(uid ?? 0, r),
     queryFn: () => fetchers.usageStats(uid!, r),
+    enabled: !!uid,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useUsageTrend(uid: number | null, r: Range) {
+  return useQuery({
+    queryKey: qk.usageTrend(uid ?? 0, r),
+    queryFn: () => fetchers.usageTrend(uid!, r),
     enabled: !!uid,
     placeholderData: keepPreviousData,
   });

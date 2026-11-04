@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Mascot } from "@/components/Mascot";
 import { Segmented } from "@/components/Segmented";
-import type { CreditRow, Range } from "@/lib/api";
+import type { CreditRow, Range, UsageRow } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { beijingDate, count, monthDay, tokens, usd, when } from "@/lib/format";
 import {
@@ -12,8 +12,10 @@ import {
   useHistory,
   useUsage,
   useUsageStats,
+  useUsageTrend,
 } from "@/lib/queries";
 import { useSession } from "@/app/context";
+import { TokenChart } from "./TokenChart";
 
 type Preset = "today" | "week" | "month" | "30d";
 const PRESETS = [
@@ -74,6 +76,15 @@ function amount(r: CreditRow) {
   if (!v) return "";
   const text = inDollars(r.type) ? usd(Math.abs(v)) : count(Math.abs(v));
   return `${v < 0 ? "−" : "+"}${text}`;
+}
+
+/** Which credit paid a call, where the server recorded it. */
+function paidWith(r: UsageRow) {
+  if (r.limited_cost == null || !(r.actual_cost > 0)) return "";
+  const limited = Math.min(r.limited_cost, r.actual_cost);
+  if (limited <= 0) return "永久额度";
+  if (r.actual_cost - limited < 1e-7) return "限时额度";
+  return `限时 ${usd(limited, true)} · 永久 ${usd(r.actual_cost - limited, true)}`;
 }
 
 function Pager({
@@ -140,6 +151,7 @@ function Usage() {
   const range = useMemo(() => rangeOf(preset), [preset]);
   const usage = useUsage(uid, range, page);
   const stats = useUsageStats(uid, range);
+  const trend = useUsageTrend(uid, range).data;
   useEffect(() => setPage(1), [preset]);
   // The next page is usually what comes next.
   useEffect(() => {
@@ -183,6 +195,16 @@ function Usage() {
           value={stats.data && usd(stats.data.total_actual_cost, true)}
         />
       </div>
+      {trend?.supported && trend.points.some((p) => p.total_tokens > 0) && (
+        <TokenChart
+          range={trend.range}
+          points={trend.points}
+          dim={
+            trend.range.start_date !== range.start_date ||
+            trend.range.end_date !== range.end_date
+          }
+        />
+      )}
       <section
         className={cn(
           "glass mt-4 p-4 transition-opacity",
@@ -223,9 +245,16 @@ function Usage() {
                       : ""}
                   </p>
                 </div>
-                <p className="font-display text-strong font-semibold tnum">
-                  {usd(r.actual_cost, true)}
-                </p>
+                <div className="text-right">
+                  <p className="font-display text-strong font-semibold tnum">
+                    {usd(r.actual_cost, true)}
+                  </p>
+                  {paidWith(r) && (
+                    <p className="text-caption text-ink/55 tnum">
+                      {paidWith(r)}
+                    </p>
+                  )}
+                </div>
               </div>
             ))}
           </div>
