@@ -43,6 +43,21 @@ pub struct Order {
     pub message: String,
 }
 
+/// 手机遥控 on this computer: the pairing's key for the relay (the phone's
+/// token is never kept), the folder Claude works in, and the switch.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Remote {
+    pub user_id: i64,
+    pub pair_id: String,
+    pub pc_key: String,
+    #[serde(default)]
+    pub folder: String,
+    #[serde(default)]
+    pub accept_edits: bool,
+    #[serde(default)]
+    pub on: bool,
+}
+
 /// Orders the worker still has to finish.
 pub const OPEN: [&str; 3] = ["awaiting_payment", "awaiting_delivery", "redeeming"];
 
@@ -74,6 +89,11 @@ pub struct Vault {
     pub login: Option<Login>,
     #[serde(default)]
     pub orders: Vec<Order>,
+    #[serde(default)]
+    pub remote: Option<Remote>,
+    /// The folder of a pairing that ended, offered again when pairing anew.
+    #[serde(default)]
+    pub remote_folder: Option<String>,
 }
 
 impl Vault {

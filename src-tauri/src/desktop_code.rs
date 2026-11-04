@@ -59,6 +59,11 @@ impl Spec {
         root.join(&self.version).join(&self.checksum[..12])
     }
 
+    /// The engine executable once installed under `root`.
+    pub fn binary(&self, root: &Path) -> PathBuf {
+        self.folder(root).join("claude.exe")
+    }
+
     fn url(&self) -> String {
         format!(
             "{ORIGIN}/{}/{}/win32-x64/claude.exe.zst",

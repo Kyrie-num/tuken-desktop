@@ -306,6 +306,62 @@ fn launch(install: &Install) -> Result<(), String> {
         .map_err(|_| "无法启动 Claude Desktop".to_string())
 }
 
+/// The Code engine of the installed Claude Desktop, for 手机遥控. A dev build
+/// may point `TUKEN_CLAUDE_CODE` at one, as its own data folder has none.
+pub fn code_engine(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if cfg!(debug_assertions) {
+        if let Some(p) = std::env::var_os("TUKEN_CLAUDE_CODE").map(PathBuf::from) {
+            return p
+                .is_file()
+                .then_some(p)
+                .ok_or_else(|| "TUKEN_CLAUDE_CODE 指向的文件不存在".into());
+        }
+    }
+    let missing = "Claude Desktop 里的 Claude Code 组件还没装好：请先在电脑上的兔啃首页修复";
+    let install = find_install().ok_or("这台电脑还没装 Claude Desktop：请先在兔啃首页安装")?;
+    #[cfg(windows)]
+    {
+        let spec = crate::desktop_code::installed_spec(&install.exe)?;
+        let root = crate::config_paths(app)?.desktop_code_cache(false)?;
+        if !crate::desktop_code::ready(&root, &spec) {
+            return Err(missing.into());
+        }
+        Ok(spec.binary(&root))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (app, &install);
+        // Claude Desktop keeps it at claude-code/<version>/<checksum>/claude.app.
+        let root = dirs::data_dir()
+            .ok_or(missing)?
+            .join("Claude-3p")
+            .join("claude-code");
+        let mut found: Vec<(Vec<u32>, PathBuf)> = Vec::new();
+        for version in std::fs::read_dir(&root).map_err(|_| missing)?.flatten() {
+            for build in std::fs::read_dir(version.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                let exe = build.path().join("claude.app/Contents/MacOS/claude");
+                if exe.is_file() {
+                    found.push((parse_version(&version.file_name().to_string_lossy()), exe));
+                }
+            }
+        }
+        found.sort();
+        found
+            .pop()
+            .map(|(_, exe)| exe)
+            .ok_or_else(|| missing.into())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (app, install, missing);
+        Err("这个系统暂不支持手机遥控".into())
+    }
+}
+
 #[tauri::command]
 pub async fn desktop_status(app: tauri::AppHandle) -> Result<Value, String> {
     #[cfg(windows)]

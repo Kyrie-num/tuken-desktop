@@ -7,6 +7,7 @@ import {
   Loader2,
   MoreHorizontal,
   Plug,
+  Smartphone,
   Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -21,10 +22,39 @@ import { InstallProgress } from "@/components/InstallProgress";
 import { cn } from "@/lib/cn";
 import { installText, useInstallStep } from "@/lib/install";
 import { isMac } from "@/lib/platform";
-import { qk, useDesktop, useGroups, useKeys } from "@/lib/queries";
+import { qk, useDesktop, useGroups, useKeys, useRemote } from "@/lib/queries";
+import { folderName } from "@/features/remote/RemoteSheet";
 import { useAction, useConnect, useSession, useUi } from "@/app/context";
 import { modelInfo } from "@/lib/models";
 import { effortNames } from "./ModelSheet";
+
+/** 手机遥控: how it stands, and the way into its sheet. */
+function RemoteRow() {
+  const { setRemoteOpen } = useUi();
+  const r = useRemote().data;
+  if (!r?.supported) return null;
+  const detail = !r.paired
+    ? "用手机给电脑上的 Claude 发指令"
+    : !r.on
+      ? "已关闭"
+      : `${r.phone_online ? "手机已连接" : "等手机连上"}${r.folder ? ` · ${folderName(r.folder)}` : ""}`;
+  return (
+    <div className="mt-2 flex items-center gap-3 rounded-[16px] bg-ink/[0.045] px-3.5 py-2.5">
+      <Smartphone size={16} className="shrink-0 text-ink/60" />
+      <div className="min-w-0 flex-1">
+        <p className="text-small font-semibold">手机遥控</p>
+        <p className="truncate text-caption text-ink/55">{detail}</p>
+      </div>
+      <button
+        type="button"
+        className="btn btn-glass btn-sm"
+        onClick={() => setRemoteOpen(true)}
+      >
+        {r.paired ? "设置" : "开启"}
+      </button>
+    </div>
+  );
+}
 
 function Step({
   n,
@@ -358,6 +388,7 @@ export function ClaudeCard() {
           )}
         </div>
       )}
+      {status?.supported && status.installed && <RemoteRow />}
     </section>
   );
 }

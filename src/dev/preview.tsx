@@ -8,6 +8,7 @@
  * &first=1 for an account that hasn't recharged yet (the first-recharge offer);
  * &credit=none for a server without time-limited credit;
  * &lapse=many for check-in credit lapsing today, tomorrow and later;
+ * &remote=paired for 手机遥控 paired with a connected phone;
  * &os=mac for macOS (traffic lights drawn in, vibrancy over a wallpaper);
  * &quiet without the setup, the first-run guide, reward popups and the day's
  * announcement, for screenshots.
@@ -40,6 +41,7 @@ installMock(
     firstRecharge: params.get("first") === "1",
     credit: params.get("credit") === "none" ? "none" : "on",
     manyLapses: params.get("lapse") === "many",
+    remotePaired: params.get("remote") === "paired",
   }),
 );
 

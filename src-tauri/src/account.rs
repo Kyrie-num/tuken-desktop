@@ -739,6 +739,10 @@ pub async fn tuken(
             crate::google::browser(&app, state)?;
             Ok(json!({}))
         }
+        "remote_status" => crate::remote::status(state).await,
+        "remote_set" => crate::remote::set(&app, state, &input).await,
+        "remote_folder" => crate::remote::choose_folder(&app, state).await,
+        "remote_unpair" => crate::remote::unpair(&app, state).await,
         "logout" => {
             let id = match input["user_id"].as_i64() {
                 Some(id) => id,
@@ -794,6 +798,16 @@ async fn account_action(
     input: &Value,
 ) -> Result<Value, String> {
     match action {
+        // 手机遥控: pair a phone with this account (replacing an earlier one).
+        "remote_pair" => {
+            let data = match crate::remote::dev_relay() {
+                Some(relay) => crate::remote::dev_pair(&relay).await?,
+                None => call_optional(state, account, "/remote", Method::POST, Some(json!({})))
+                    .await?
+                    .ok_or("兔啃服务器还不支持手机遥控，请稍后再试")?,
+            };
+            crate::remote::paired(app, state, account.user_id, &data).await
+        }
         "announcements" => {
             let list = call_optional(state, account, "/announcements", Method::GET, None).await?;
             let Some(list) = list else {

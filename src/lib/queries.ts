@@ -1,11 +1,14 @@
+import { useEffect } from "react";
 import {
   focusManager,
   keepPreviousData,
   QueryCache,
   QueryClient,
   useQuery,
+  useQueryClient,
   type QueryClient as Client,
 } from "@tanstack/react-query";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import {
   autostart,
@@ -30,6 +33,7 @@ import {
   type Page,
   type Profile,
   type Range,
+  type RemoteStatus,
   type UsageRow,
   type UsageStats,
   type UsageTrend,
@@ -105,6 +109,7 @@ export const qk = {
   usageTrend: (uid: number, r: Range) =>
     ["u", uid, "usage_trend", r.start_date, r.end_date] as const,
   history: (uid: number, page: number) => ["u", uid, "history", page] as const,
+  remote: ["remote"] as const,
 };
 
 /** The account's own call: refused natively if another account became current. */
@@ -320,6 +325,27 @@ export function useUsageTrend(uid: number | null, r: Range) {
     queryFn: () => fetchers.usageTrend(uid!, r),
     enabled: !!uid,
     placeholderData: keepPreviousData,
+  });
+}
+
+/** 手机遥控 on this computer, fetched again whenever the native side reports. */
+export function useRemote() {
+  const client = useQueryClient();
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void listen("tuken://remote", () => {
+      void client.invalidateQueries({ queryKey: qk.remote });
+    }).then((u) => (gone ? u() : (stop = u)));
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, [client]);
+  return useQuery({
+    queryKey: qk.remote,
+    queryFn: () => tuken<RemoteStatus>("remote_status"),
+    staleTime: 5_000,
   });
 }
 

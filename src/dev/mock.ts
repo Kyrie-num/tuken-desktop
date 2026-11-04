@@ -53,6 +53,8 @@ export function createMock(
     firstRecharge = false,
     /** Check-in credit from a week of days, lapsing today, tomorrow and later. */
     manyLapses = false,
+    /** 手机遥控 already paired, a phone connected, a few things done. */
+    remotePaired = false,
     /** The system the app runs on. */
     platform = "windows" as "windows" | "macos",
     /** The first account was made long ago, not just now. */
@@ -191,6 +193,32 @@ export function createMock(
     firstRecharge,
     /** Starting with the computer, off until switched on. */
     autostart: false,
+    remote: {
+      paired: remotePaired,
+      on: remotePaired,
+      folder: remotePaired ? "D:\\work\\tuken-app" : (null as string | null),
+      accept_edits: false,
+      phone_online: remotePaired,
+      log: remotePaired
+        ? [
+            { kind: "user", text: "把登录页的按钮改成橙色" },
+            { kind: "tool", id: "t1", title: "读取 src/Login.tsx" },
+            { kind: "tool_done", id: "t1", ok: true },
+            {
+              kind: "ask",
+              request_id: "r1",
+              title: "Claude 想修改文件",
+              detail: "src/Login.tsx",
+            },
+            { kind: "asked", request_id: "r1", allowed: true },
+            {
+              kind: "text",
+              text: "改好了：按钮用了 #ED6C00，悬停时稍微变亮。",
+            },
+            { kind: "done", ok: true, seconds: 41, cost: 0.0312 },
+          ]
+        : [],
+    },
     notices: [
       {
         id: 2,
@@ -352,6 +380,13 @@ export function createMock(
       .filter((p) => p !== null);
     return points;
   };
+  const remoteView = () => ({
+    supported: true,
+    ...db.remote,
+    listening: db.remote.paired && db.remote.on,
+    busy: false,
+    error: null,
+  });
   const me = () => db.accounts.find((a) => a.user_id === db.active)!;
   const view = () => ({
     active: db.active,
@@ -746,6 +781,30 @@ export function createMock(
           supported: true,
           points: trendOf(input.start_date, input.end_date),
         };
+      case "remote_status":
+        return remoteView();
+      case "remote_folder":
+        db.remote.folder = "D:\\work\\tuken-app";
+        return remoteView();
+      case "remote_set":
+        for (const k of ["on", "accept_edits", "folder"] as const)
+          if (input[k] !== undefined) (db.remote as any)[k] = input[k];
+        return remoteView();
+      case "remote_pair":
+        db.remote.paired = true;
+        db.remote.on = true;
+        db.remote.phone_online = false;
+        return {
+          ...remoteView(),
+          link: "https://www.tuken.site/remote#t=mock-phone-token",
+          qr: mockQr(),
+        };
+      case "remote_unpair":
+        db.remote.paired = false;
+        db.remote.on = false;
+        db.remote.phone_online = false;
+        db.remote.log = [];
+        return remoteView();
       case "recharge_history":
         return page(db.credits, input.page ?? 1);
       case "key_create": {
@@ -887,6 +946,27 @@ export function createMock(
         throw `模拟数据不支持：${cmd}`;
     }
   };
+}
+
+/** Something that looks like a QR code: three finder squares and noise. */
+function mockQr() {
+  const n = 29;
+  let path = "";
+  const finder = (x: number, y: number) => {
+    path += `M${x} ${y}h7v7h-7zM${x + 1} ${y + 1}v5h5v-5z`;
+    path += `M${x + 2} ${y + 2}h3v3h-3z`;
+  };
+  finder(0, 0);
+  finder(n - 7, 0);
+  finder(0, n - 7);
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) {
+      const inFinder =
+        (x < 8 && y < 8) || (x > n - 9 && y < 8) || (x < 8 && y > n - 9);
+      if (!inFinder && (x * 7 + y * 13 + x * y) % 5 < 2)
+        path += `M${x} ${y}h1v1h-1z`;
+    }
+  return { size: n, path };
 }
 
 /** Installs `invoke` where @tauri-apps/api looks for the native bridge. */

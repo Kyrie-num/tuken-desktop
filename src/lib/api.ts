@@ -220,6 +220,39 @@ export type Credit =
       limited: { amount: number; expires_at: string; source: string }[];
       first_recharge: { enabled: boolean; eligible: boolean; percent: number };
     };
+/** One thing Claude did for the phone, as the window shows it. */
+export type RemoteEvent = {
+  kind:
+    "user" | "text" | "tool" | "tool_done" | "ask" | "asked" | "done" | "note";
+  text?: string;
+  title?: string;
+  detail?: string;
+  id?: string;
+  ok?: boolean;
+  request_id?: string;
+  allowed?: boolean;
+  seconds?: number;
+  cost?: number;
+};
+/** 手机遥控 on this computer. */
+export type RemoteStatus = {
+  supported: boolean;
+  paired: boolean;
+  /** Prompts from the phone are run. */
+  on: boolean;
+  folder: string | null;
+  /** File edits need no approval on the phone. */
+  accept_edits: boolean;
+  listening: boolean;
+  phone_online: boolean;
+  busy: boolean;
+  error: string | null;
+  /** The latest events, oldest first. */
+  log: RemoteEvent[];
+  /** Right after pairing only: the phone's link and its QR code. */
+  link?: string;
+  qr?: { size: number; path: string };
+};
 /** Inviting friends: my code, what an invite brings, and how it went. */
 export type Invite =
   | { supported: false }

@@ -63,6 +63,8 @@ type Ui = {
   setCheckinOpen: (open: boolean) => void;
   inviteOpen: boolean;
   setInviteOpen: (open: boolean) => void;
+  remoteOpen: boolean;
+  setRemoteOpen: (open: boolean) => void;
   /**
    * The signed-in account's first-run setup on this computer: still to
    * decide, on show (until finished, even once Claude Desktop is
@@ -128,6 +130,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [noticesOpen, setNoticesOpen] = useState(false);
   const [checkinOpen, setCheckinOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [remoteOpen, setRemoteOpen] = useState(false);
   const [tour, setTour] = useState<number | null>(null);
   const { uid } = useSession();
   // Each account's setup as decided in this run; before that, its mark.
@@ -177,6 +180,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
       setCheckinOpen,
       inviteOpen,
       setInviteOpen,
+      remoteOpen,
+      setRemoteOpen,
       setup,
       beginSetup,
       finishSetup,
@@ -195,6 +200,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
       noticesOpen,
       checkinOpen,
       inviteOpen,
+      remoteOpen,
       setup,
       beginSetup,
       finishSetup,

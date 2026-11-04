@@ -856,6 +856,48 @@ describe("兔啃", () => {
     );
   });
 
+  it("pairs a phone for 手机遥控 once a folder is chosen, and unpairs it", async () => {
+    const user = userEvent.setup();
+    const invoke = show("ok");
+    const row = (await screen.findByText("手机遥控")).closest(
+      "div",
+    )!.parentElement!;
+    await user.click(within(row).getByRole("button", { name: "开启" }));
+    const sheet = await screen.findByRole("dialog", { name: "手机遥控" });
+    const pair = within(sheet).getByRole("button", { name: "配对手机" });
+    expect(pair).toBeDisabled();
+    expect(
+      within(sheet).getByText("先选好文件夹，再配对手机"),
+    ).toBeInTheDocument();
+
+    await user.click(within(sheet).getByRole("button", { name: "选择" }));
+    expect(
+      await within(sheet).findByText("D:\\work\\tuken-app"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(pair).toBeEnabled());
+    await user.click(pair);
+    // The phone's code shows once; the token is never asked for again.
+    expect(
+      await within(sheet).findByRole("img", { name: "配对二维码" }),
+    ).toBeInTheDocument();
+    expect(calls(invoke, "remote_pair")).toHaveLength(1);
+    expect(calls(invoke, "remote_pair")[0]).toMatchObject({ as_user: 1 });
+
+    await user.click(
+      within(sheet).getByRole("checkbox", { name: /改文件不用手机确认/ }),
+    );
+    await waitFor(() =>
+      expect(calls(invoke, "remote_set").at(-1)).toMatchObject({
+        accept_edits: true,
+      }),
+    );
+    await user.click(within(sheet).getByRole("button", { name: "解除配对" }));
+    expect(
+      await within(sheet).findByRole("button", { name: "配对手机" }),
+    ).toBeInTheDocument();
+    expect(within(sheet).queryByRole("img", { name: "配对二维码" })).toBeNull();
+  });
+
   it("only reads when it opens: no key, order, install or Claude Desktop change", async () => {
     const invoke = show("in");
     await screen.findByText("$28.50");

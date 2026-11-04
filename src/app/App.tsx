@@ -18,6 +18,7 @@ import { Profile } from "@/features/account/Profile";
 import { RechargeSheet } from "@/features/recharge/RechargeSheet";
 import { ContactSheet } from "@/features/account/ContactSheet";
 import { InviteSheet } from "@/features/account/InviteSheet";
+import { RemoteSheet } from "@/features/remote/RemoteSheet";
 import { AuthSheet } from "@/features/auth/AuthSheet";
 import { GoogleInviteSheet } from "@/features/auth/GoogleInviteSheet";
 import { UpdateNotice } from "@/features/update/Update";
@@ -119,6 +120,7 @@ export function App() {
           <AuthSheet />
           <NoticesSheet />
           <InviteSheet />
+          <RemoteSheet />
           <RewardNotice />
           <LoginBanner />
           <Tour />

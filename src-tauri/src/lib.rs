@@ -15,6 +15,7 @@ mod desktop_mac;
 pub mod desktop_windows;
 mod google;
 mod panel;
+mod remote;
 mod shop;
 mod update;
 mod vault;
@@ -532,6 +533,7 @@ pub fn run() {
             *app.state::<State>().backdrop.lock().unwrap() = used;
             create_tray(app)?;
             shop::start_worker(app.handle().clone());
+            remote::start_worker(app.handle().clone());
             Ok(())
         })
         .invoke_handler({
@@ -568,6 +570,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running 兔啃")
         .run(|app, event| {
+            // Claude Code started for 手机遥控 ends with 兔啃.
+            if let tauri::RunEvent::Exit = event {
+                remote::shutdown();
+            }
             // Clicking 兔啃 in the Dock brings back its closed window.
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
