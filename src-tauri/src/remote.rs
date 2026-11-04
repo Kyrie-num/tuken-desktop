@@ -13,7 +13,7 @@
 //! and never kept here.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -1029,11 +1029,14 @@ fn has_git_bash() -> bool {
     let roots = [
         std::env::var_os("ProgramFiles"),
         std::env::var_os("ProgramFiles(x86)"),
-        std::env::var_os("LOCALAPPDATA")
-            .map(|l| PathBuf::from(l).join("Programs").into_os_string()),
+        std::env::var_os("LOCALAPPDATA").map(|l| {
+            std::path::PathBuf::from(l)
+                .join("Programs")
+                .into_os_string()
+        }),
     ];
     roots.into_iter().flatten().any(|r| {
-        PathBuf::from(r)
+        std::path::PathBuf::from(r)
             .join("Git")
             .join("bin")
             .join("bash.exe")
