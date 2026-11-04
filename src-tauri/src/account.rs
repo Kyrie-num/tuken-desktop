@@ -744,6 +744,15 @@ pub async fn tuken(
         "remote_folder" => crate::remote::choose_folder(&app, state).await,
         "remote_unpair" => crate::remote::unpair(&app, state).await,
         "remote_sync" => crate::remote::sync_now(&app, state).await,
+        // A dev build against a stand-in relay pairs without an account
+        // (its sandbox has none); a release build never gets here.
+        "remote_pair"
+            if crate::remote::dev_relay().is_some() && state.vault().await?.current().is_none() =>
+        {
+            let relay = crate::remote::dev_relay().unwrap_or_default();
+            let data = crate::remote::dev_pair(&relay).await?;
+            crate::remote::paired(&app, state, 0, &data).await
+        }
         "logout" => {
             let id = match input["user_id"].as_i64() {
                 Some(id) => id,

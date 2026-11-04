@@ -11,7 +11,14 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Sheet } from "@/components/Sheet";
-import { tuken, type RemoteEvent, type RemoteStatus } from "@/lib/api";
+import {
+  EFFORTS,
+  REMOTE_MODES,
+  tuken,
+  type RemoteEvent,
+  type RemoteStatus,
+} from "@/lib/api";
+import { effortNames } from "@/features/home/ModelSheet";
 import { cn } from "@/lib/cn";
 import { qk, useRemote } from "@/lib/queries";
 import { useAction, useSession, useUi } from "@/app/context";
@@ -105,6 +112,21 @@ function Checkbox({
   );
 }
 
+function SettingRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-3 pl-[30px]">
+      <p className="min-w-0 flex-1 text-small text-ink/70">{label}</p>
+      {children}
+    </div>
+  );
+}
+
 /** 手机遥控: choose where Claude works, pair a phone, and see what it does. */
 export function RemoteSheet() {
   const { remoteOpen, setRemoteOpen } = useUi();
@@ -148,6 +170,7 @@ export function RemoteSheet() {
 
   const unsynced = r?.unsynced ?? [];
   const models = r?.models ?? [];
+  const settings = r?.settings;
 
   const recent = (r?.log ?? [])
     .map((e) => line(e))
@@ -189,25 +212,86 @@ export function RemoteSheet() {
             </button>
           </div>
 
-          {r.paired && models.length > 0 && (
-            <div className="flex items-center gap-3 rounded-[18px] bg-ink/[0.045] px-4 py-3">
-              <Sparkles size={18} className="shrink-0 text-ink/60" />
-              <p className="min-w-0 flex-1 text-body font-medium">模型</p>
-              <select
-                aria-label="Claude 用的模型"
-                className="field h-[30px] w-auto max-w-[220px] rounded-full px-3 text-small"
-                value={r.model ?? models[0]}
-                disabled={busy}
-                onChange={(e) =>
-                  void act("remote_set", { model: e.target.value })
-                }
-              >
-                {models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
+          {r.paired && settings && (
+            <div className="space-y-2.5 rounded-[18px] bg-ink/[0.045] px-4 py-3">
+              <div className="flex items-center gap-3">
+                <Sparkles size={18} className="shrink-0 text-ink/60" />
+                <p className="min-w-0 flex-1 text-body font-medium">
+                  Claude 的设置
+                </p>
+                {settings.custom.length > 0 ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={busy}
+                    onClick={() => void act("remote_set", { follow: true })}
+                  >
+                    跟随 Claude Desktop
+                  </button>
+                ) : (
+                  <span className="text-caption text-ink/55">
+                    跟随 Claude Desktop
+                  </span>
+                )}
+              </div>
+              <SettingRow label="权限">
+                <select
+                  aria-label="权限"
+                  className="field h-[30px] w-auto rounded-full px-3 text-small"
+                  value={settings.mode}
+                  disabled={busy}
+                  onChange={(e) =>
+                    void act("remote_set", { mode: e.target.value })
+                  }
+                >
+                  {REMOTE_MODES.map(([m, name]) => (
+                    <option key={m} value={m}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </SettingRow>
+              {models.length > 0 && (
+                <SettingRow label="模型">
+                  <select
+                    aria-label="Claude 用的模型"
+                    className="field h-[30px] w-auto max-w-[220px] rounded-full px-3 text-small"
+                    value={settings.model ?? models[0]}
+                    disabled={busy}
+                    onChange={(e) =>
+                      void act("remote_set", { model: e.target.value })
+                    }
+                  >
+                    {models.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </SettingRow>
+              )}
+              <SettingRow label="推理程度">
+                <select
+                  aria-label="推理程度"
+                  className="field h-[30px] w-auto rounded-full px-3 text-small"
+                  value={settings.effort ?? "max"}
+                  disabled={busy}
+                  onChange={(e) =>
+                    void act("remote_set", { effort: e.target.value })
+                  }
+                >
+                  {EFFORTS.map((e) => (
+                    <option key={e} value={e}>
+                      {effortNames[e]}
+                    </option>
+                  ))}
+                </select>
+              </SettingRow>
+              {settings.mode === "bypassPermissions" && (
+                <p className="text-caption text-ink/55">
+                  全部自动：运行命令、改文件都不再在手机上问你。
+                </p>
+              )}
             </div>
           )}
 
@@ -274,14 +358,6 @@ export function RemoteSheet() {
               </div>
             </div>
           ) : null}
-
-          <Checkbox
-            checked={r.accept_edits}
-            label="改文件不用手机确认"
-            hint="只有运行命令时才在手机上问你"
-            disabled={busy || !r.paired}
-            onChange={(on) => void act("remote_set", { accept_edits: on })}
-          />
 
           {(r.paired || unsynced.length > 0) && (
             <Checkbox

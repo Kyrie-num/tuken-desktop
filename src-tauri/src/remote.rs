@@ -7,8 +7,13 @@
 //!   prompts over stdio, the way Claude's own SDK runs it, with 兔啃's gateway
 //!   key. Its output becomes short events for the phone and this window,
 //!   posted in batches by `send_loop`.
-//! - A permission prompt waits for the phone's 允许 / 拒绝 (10 minutes).
-//! - The phone may switch Claude's model among Claude Desktop's (set_model).
+//! - Claude runs with what a new conversation in Claude Desktop gets: its
+//!   permission mode (bypass permissions when it has none: nothing asks),
+//!   model and effort. The phone may choose others (set_permission_mode and
+//!   set_model on the running engine; a new effort restarts it, resuming).
+//! - Claude's text streams to the phone as it is written (partial messages).
+//! - A permission prompt, in the modes that ask, waits for the phone's
+//!   允许 / 拒绝 (10 minutes).
 //! - A phone conversation that has ended (新对话, the phone away for a
 //!   minute, or quiet for 15) goes into Claude Desktop's list through its own
 //!   import link, `claude://resume?session=<id>`: Claude Desktop shows a
@@ -57,6 +62,10 @@ const PC_IDLE: Duration = Duration::from_secs(90);
 const SYNC_EVERY: Duration = Duration::from_secs(20);
 const SYNC_TRIES: u32 = 3;
 const UNSYNCED_MAX: usize = 20;
+/// Permission modes the phone may choose, the one that never asks first.
+const MODES: [&str; 3] = ["bypassPermissions", "acceptEdits", "default"];
+/// Streamed text merged into one waiting event, at most.
+const DELTA_MAX: usize = 4_000;
 
 #[derive(Default)]
 struct Runtime {
@@ -90,6 +99,27 @@ struct Runtime {
     ended: bool,
     /// Put conversations into Claude Desktop now, whatever the computer does.
     sync_now: bool,
+    /// The pairing as last saved: the phone's status and new engines read
+    /// it, so a setting changes without restarting the relay loops.
+    cfg: Option<Remote>,
+    /// What a new conversation in Claude Desktop starts with.
+    defaults: Defaults,
+    /// The mode and effort the running engine has.
+    mode: Option<String>,
+    effort: Option<String>,
+    /// A new effort level: restart the engine once this turn is done.
+    restart_after_turn: bool,
+    /// The message and content block Claude is writing (streamed text).
+    stream_msg: Option<String>,
+    stream_block: i64,
+}
+
+/// Claude Desktop's own defaults for a new conversation.
+#[derive(Clone, Default)]
+struct Defaults {
+    mode: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
 }
 
 static RT: LazyLock<Mutex<Runtime>> = LazyLock::new(Default::default);
@@ -226,12 +256,11 @@ fn status_view(v: &crate::vault::Vault) -> Value {
         "paired": cfg.is_some(),
         "on": cfg.is_some_and(|c| c.on),
         "folder": folder,
-        "accept_edits": cfg.is_some_and(|c| c.accept_edits),
         "listening": rt.listening,
         "phone_online": rt.phone_online,
         "busy": rt.busy,
         "error": rt.error,
-        "model": rt.model.clone().or_else(|| cfg.and_then(|c| c.model.clone())),
+        "settings": settings_view(cfg, &rt),
         "models": rt.models,
         "sync": !v.remote_sync_off,
         "unsynced": v.remote_unsynced.iter().map(|u| json!({ "title": u.title, "folder": folder_name(&u.folder), "ended": u.ended })).collect::<Vec<_>>(),
@@ -253,15 +282,55 @@ fn folder_name(folder: &str) -> String {
 }
 
 /// What the phone sees about this computer.
-fn phone_status(cfg: &Remote) -> Value {
+fn phone_status(fallback: &Remote) -> Value {
     let rt = RT.lock().unwrap();
-    json!({
-        "folder": folder_name(&cfg.folder),
-        "model": rt.model.clone().or_else(|| cfg.model.clone()).or_else(|| rt.models.first().cloned()),
-        "models": rt.models,
-        "busy": rt.busy,
-        "mode": if cfg.accept_edits { "acceptEdits" } else { "default" },
-    })
+    let cfg = rt.cfg.as_ref().unwrap_or(fallback);
+    let mut status = settings_view(Some(cfg), &rt);
+    status["folder"] = json!(folder_name(&cfg.folder));
+    status["models"] = json!(rt.models);
+    status["efforts"] = json!(crate::claude_config::EFFORTS);
+    status["busy"] = json!(rt.busy);
+    status
+}
+
+/// The mode, model and effort a phone conversation runs with: chosen on the
+/// phone, else Claude Desktop's defaults; bypass permissions when neither
+/// says (the user wants nothing to ask).
+fn chosen(cfg: Option<&Remote>, rt: &Runtime) -> (String, Option<String>, Option<String>) {
+    let mode = cfg
+        .and_then(|c| c.mode.clone())
+        .filter(|m| MODES.contains(&m.as_str()))
+        .or_else(|| {
+            rt.defaults
+                .mode
+                .clone()
+                .filter(|m| MODES.contains(&m.as_str()))
+        })
+        .unwrap_or_else(|| MODES[0].to_string());
+    let model = cfg
+        .and_then(|c| c.model.clone())
+        .filter(|m| rt.models.contains(m))
+        .or_else(|| rt.defaults.model.clone());
+    let effort = cfg
+        .and_then(|c| c.effort.clone())
+        .filter(|e| crate::claude_config::EFFORTS.contains(&e.as_str()))
+        .or_else(|| rt.defaults.effort.clone());
+    (mode, model, effort)
+}
+
+/// The settings as the phone and this window show them, and which of them
+/// were chosen here rather than following Claude Desktop.
+fn settings_view(cfg: Option<&Remote>, rt: &Runtime) -> Value {
+    let (mode, model, effort) = chosen(cfg, rt);
+    let custom: Vec<&str> = [
+        ("mode", cfg.and_then(|c| c.mode.as_ref()).is_some()),
+        ("model", cfg.and_then(|c| c.model.as_ref()).is_some()),
+        ("effort", cfg.and_then(|c| c.effort.as_ref()).is_some()),
+    ]
+    .into_iter()
+    .filter_map(|(k, set)| set.then_some(k))
+    .collect();
+    json!({ "mode": mode, "model": model, "effort": effort, "custom": custom })
 }
 
 /// One event for the phone and the window.
@@ -281,6 +350,31 @@ fn event(app: &AppHandle, e: Value) {
     }
     OUTBOX.notify_one();
     let _ = app.emit("tuken://remote", json!({ "event": e }));
+}
+
+/// Streamed text, for the phone only (the window lists finished text):
+/// merged into the delta before it while that waits to be sent.
+fn delta(id: &str, text: &str) {
+    {
+        let mut rt = RT.lock().unwrap();
+        if !rt.listening {
+            return;
+        }
+        match rt.outbox.back_mut() {
+            Some(last)
+                if last["kind"] == "delta"
+                    && last["id"] == id
+                    && last["text"].as_str().map_or(0, str::len) < DELTA_MAX =>
+            {
+                let joined = format!("{}{text}", last["text"].as_str().unwrap_or(""));
+                last["text"] = json!(joined);
+            }
+            _ => rt
+                .outbox
+                .push_back(json!({ "kind": "delta", "id": id, "text": text })),
+        }
+    }
+    OUTBOX.notify_one();
 }
 
 fn note(app: &AppHandle, text: impl Into<String>) {
@@ -323,6 +417,8 @@ pub async fn paired(
         .unwrap_or_default();
     let accept_edits = v.remote.as_ref().is_some_and(|r| r.accept_edits);
     let model = v.remote.as_ref().and_then(|r| r.model.clone());
+    let mode = v.remote.as_ref().and_then(|r| r.mode.clone());
+    let effort = v.remote.as_ref().and_then(|r| r.effort.clone());
     v.remote = Some(Remote {
         user_id,
         pair_id: pair_id.into(),
@@ -331,6 +427,8 @@ pub async fn paired(
         accept_edits,
         on: true,
         model,
+        mode,
+        effort,
     });
     state.save(&v)?;
     let cfg = v.remote.clone();
@@ -411,10 +509,24 @@ pub async fn set(app: &AppHandle, state: &State, input: &Value) -> Result<Value,
         }
         cfg.model = Some(model.into());
     }
-    if let Some(accept) = input["accept_edits"].as_bool() {
-        restart_engine |= cfg.accept_edits != accept;
-        cfg.accept_edits = accept;
+    if let Some(mode) = input["mode"].as_str() {
+        if !MODES.contains(&mode) {
+            return Err("没有这个权限模式".into());
+        }
+        cfg.mode = Some(mode.into());
     }
+    if let Some(effort) = input["effort"].as_str() {
+        if !crate::claude_config::EFFORTS.contains(&effort) {
+            return Err("没有这个推理程度".into());
+        }
+        cfg.effort = Some(effort.into());
+    }
+    if input["follow"] == true {
+        cfg.mode = None;
+        cfg.model = None;
+        cfg.effort = None;
+    }
+    let toggled = input["on"].as_bool().is_some_and(|on| on != cfg.on);
     if let Some(on) = input["on"].as_bool() {
         cfg.on = on;
     }
@@ -424,9 +536,13 @@ pub async fn set(app: &AppHandle, state: &State, input: &Value) -> Result<Value,
     }
     state.save(&v)?;
     drop(v);
-    if let Some(model) = input["model"].as_str() {
-        apply_model(app, model).await;
-    }
+    let before = {
+        let mut rt = RT.lock().unwrap();
+        let before = chosen(rt.cfg.as_ref(), &rt);
+        rt.cfg = Some(cfg.clone());
+        before
+    };
+    apply_settings(app, before).await;
     if new_folder {
         // Another project: the conversation so far is over, the next starts afresh.
         end_conversation(app, true).await;
@@ -435,14 +551,20 @@ pub async fn set(app: &AppHandle, state: &State, input: &Value) -> Result<Value,
         rt.ended = false;
     }
     if restart_engine {
-        // The next prompt starts Claude Code again, in the new folder or mode.
+        // The next prompt starts Claude Code again, in the new folder.
         stop_engine(app, true);
         note(
             app,
             format!("之后的指令在「{}」里执行", folder_name(&cfg.folder)),
         );
     }
-    restart(app, Some(cfg));
+    // Only switching it on or off restarts the relay loops: a restart drops
+    // what waits to be sent, these notes included.
+    if toggled {
+        restart(app, Some(cfg));
+    } else {
+        changed(app);
+    }
     status(state).await
 }
 
@@ -455,14 +577,15 @@ fn restart(app: &AppHandle, cfg: Option<Remote>) {
         rt.phone_online = false;
         rt.error = None;
         rt.outbox.clear();
+        rt.cfg = cfg.clone();
         rt.generation
     };
     match cfg {
         Some(cfg) if cfg.on => {
             RT.lock().unwrap().listening = true;
-            // The phone's model list, from the start.
+            // The phone's settings and model list, from the start.
             if let Ok(paths) = crate::config_paths(app) {
-                refresh_models(&paths);
+                refresh_desktop(&paths);
             }
             let a = app.clone();
             let c = cfg.clone();
@@ -649,12 +772,14 @@ async fn handle(app: &AppHandle, cfg: &Remote, msg: &Value) {
             drop(rt);
             note(app, "已开始新对话");
         }
-        Some("model") => {
-            let model = msg["model"].as_str().unwrap_or("");
+        Some(kind @ ("model" | "mode" | "effort" | "follow")) => {
+            let change = match kind {
+                "follow" => json!({ "follow": true }),
+                _ => json!({ kind: msg[kind].as_str().unwrap_or("") }),
+            };
             let state = app.state::<State>();
-            match set(app, &state, &json!({ "model": model })).await {
-                Ok(_) => {}
-                Err(why) => note(app, why),
+            if let Err(why) = set(app, &state, &change).await {
+                note(app, why);
             }
         }
         Some("sync") => {
@@ -667,10 +792,17 @@ async fn handle(app: &AppHandle, cfg: &Remote, msg: &Value) {
 }
 
 async fn prompt(app: &AppHandle, cfg: &Remote, text: &str) {
+    // The pairing as saved now (its folder may have changed since listening began).
+    let cfg = RT
+        .lock()
+        .unwrap()
+        .cfg
+        .clone()
+        .unwrap_or_else(|| cfg.clone());
     let engine = RT.lock().unwrap().engine.clone();
     let engine = match engine {
         Some(e) => e,
-        None => match start(app, cfg).await {
+        None => match start(app, &cfg).await {
             Ok(e) => e,
             Err(why) => {
                 event(app, json!({ "kind": "user", "text": text }));
@@ -754,16 +886,8 @@ async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
     let key = crate::claude_config::desktop_key(&paths)
         .or_else(|| crate::claude_config::cli_key(&paths))
         .ok_or("电脑上的兔啃还没接入 Claude Desktop：请先在首页点「一键接入」")?;
-    let models = refresh_models(&paths);
-    // The one chosen from the phone, while Claude Desktop still offers it.
-    let model = cfg
-        .model
-        .clone()
-        .filter(|m| models.contains(m))
-        .or_else(|| models.first().cloned());
-    let effort = crate::claude_config::desktop_models(&paths).unwrap_or_default()["effort"]
-        .as_str()
-        .map(str::to_string);
+    refresh_desktop(&paths);
+    let (mode, model, effort) = chosen(Some(cfg), &RT.lock().unwrap());
 
     let mut args: Vec<String> = [
         "--output-format",
@@ -777,9 +901,17 @@ async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
     .iter()
     .map(|s| s.to_string())
     .collect();
-    if cfg.accept_edits {
-        args.extend(["--permission-mode".into(), "acceptEdits".into()]);
-    }
+    args.extend([
+        "--permission-mode".into(),
+        mode.clone(),
+        // So the mode can become bypass permissions later, as in Claude Desktop.
+        "--allow-dangerously-skip-permissions".into(),
+        // Claude's text as it is written.
+        "--include-partial-messages".into(),
+        // A question tool the phone can't show; Claude asks in its reply instead.
+        "--disallowedTools".into(),
+        "AskUserQuestion".into(),
+    ]);
     if let Some(m) = &model {
         args.extend(["--model".into(), m.clone()]);
     }
@@ -850,6 +982,9 @@ async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
         let mut rt = RT.lock().unwrap();
         rt.engine = Some(engine.clone());
         rt.model = model.clone();
+        rt.mode = Some(mode.clone());
+        rt.effort = effort.clone();
+        rt.restart_after_turn = false;
         rt.spent = 0.0;
         rt.folder = Some(cfg.folder.clone());
         if rt.ended {
@@ -933,13 +1068,56 @@ async fn output(app: &AppHandle, engine: &Arc<Engine>, folder: &str, v: &Value) 
             drop(rt);
             changed(app);
         }
+        Some("stream_event") => {
+            let ev = &v["event"];
+            match ev["type"].as_str() {
+                Some("message_start") => {
+                    RT.lock().unwrap().stream_msg =
+                        ev["message"]["id"].as_str().map(str::to_string);
+                }
+                Some("content_block_start") => {
+                    RT.lock().unwrap().stream_block = ev["index"].as_i64().unwrap_or(0);
+                }
+                Some("content_block_delta") if ev["delta"]["type"] == "text_delta" => {
+                    let id = {
+                        let rt = RT.lock().unwrap();
+                        format!(
+                            "{}:{}",
+                            rt.stream_msg.as_deref().unwrap_or(""),
+                            ev["index"].as_i64().unwrap_or(0)
+                        )
+                    };
+                    if let Some(text) = ev["delta"]["text"].as_str() {
+                        delta(&id, text);
+                    }
+                }
+                _ => {}
+            }
+        }
         Some("assistant") => {
-            for block in v["message"]["content"].as_array().into_iter().flatten() {
+            // Each finished block comes as a message of its own, with the id of
+            // the message being streamed: the block is the one last started.
+            let msg_id = v["message"]["id"].as_str().unwrap_or("");
+            let block = {
+                let rt = RT.lock().unwrap();
+                (rt.stream_msg.as_deref() == Some(msg_id)).then_some(rt.stream_block)
+            };
+            for (i, block_value) in v["message"]["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                let block_id = format!("{msg_id}:{}", block.unwrap_or(i as i64));
+                let block = block_value;
                 match block["type"].as_str() {
                     Some("text") => {
                         let text = block["text"].as_str().unwrap_or("").trim();
                         if !text.is_empty() {
-                            event(app, json!({ "kind": "text", "text": clip(text, TEXT_MAX) }));
+                            event(
+                                app,
+                                json!({ "kind": "text", "id": block_id, "text": clip(text, TEXT_MAX) }),
+                            );
                         }
                     }
                     Some("tool_use") => event(
@@ -983,15 +1161,20 @@ async fn output(app: &AppHandle, engine: &Arc<Engine>, folder: &str, v: &Value) 
             if !ok {
                 e["text"] = json!(clip(v["result"].as_str().unwrap_or(""), 300));
             }
-            {
+            let restart = {
                 let mut rt = RT.lock().unwrap();
                 if let Some(s) = v["session_id"].as_str() {
                     rt.session = Some(s.to_string());
                 }
                 rt.last_turn = Some(Instant::now());
-            }
+                std::mem::take(&mut rt.restart_after_turn)
+            };
             event(app, e);
             set_busy(app, false);
+            if restart {
+                // A new effort level: the next prompt resumes with it.
+                stop_engine(app, true);
+            }
         }
         Some("control_request") if v["request"]["subtype"] == "can_use_tool" => {
             let Some(id) = v["request_id"].as_str() else {
@@ -1049,36 +1232,88 @@ async fn output(app: &AppHandle, engine: &Arc<Engine>, folder: &str, v: &Value) 
 
 // ---------------------------------------------------------------- model
 
-/// Claude Desktop's models (the ones 兔啃 set there), kept for the phone.
-fn refresh_models(paths: &crate::claude_config::Paths) -> Vec<String> {
-    let models: Vec<String> = crate::claude_config::desktop_models(paths)
-        .and_then(|m| {
-            m["models"].as_array().map(|ms| {
-                ms.iter()
-                    .filter_map(|m| m.as_str().map(str::to_string))
-                    .collect()
-            })
+/// Claude Desktop's models (the ones 兔啃 set there) and what a new
+/// conversation there starts with, kept for the phone.
+fn refresh_desktop(paths: &crate::claude_config::Paths) -> Vec<String> {
+    let set = crate::claude_config::desktop_models(paths).unwrap_or_default();
+    let models: Vec<String> = set["models"]
+        .as_array()
+        .map(|ms| {
+            ms.iter()
+                .filter_map(|m| m.as_str().map(str::to_string))
+                .collect()
         })
         .unwrap_or_default();
-    RT.lock().unwrap().models = models.clone();
+    let mut rt = RT.lock().unwrap();
+    rt.defaults = Defaults {
+        mode: crate::claude_config::default_permission_mode(paths),
+        model: models.first().cloned(),
+        effort: set["effort"].as_str().map(str::to_string),
+    };
+    rt.models = models.clone();
     models
 }
 
-/// Switches the running engine to `model`; a stopped one starts with it.
-async fn apply_model(app: &AppHandle, model: &str) {
-    let engine = RT.lock().unwrap().engine.clone();
-    match engine {
-        Some(e) => {
-            let id = e.next_id("model");
-            let line = json!({ "type": "control_request", "request_id": id, "request": { "subtype": "set_model", "model": model } });
+fn mode_name(mode: &str) -> &'static str {
+    match mode {
+        "bypassPermissions" => "全部自动",
+        "acceptEdits" => "改文件自动",
+        _ => "每次询问",
+    }
+}
+
+fn effort_name(effort: &str) -> &'static str {
+    match effort {
+        "low" => "低",
+        "medium" => "中",
+        "high" => "高",
+        "xhigh" => "超高",
+        _ => "最高",
+    }
+}
+
+/// Says what changed in the chosen mode, model and effort (the note also
+/// brings the phone the new status), and brings a running engine to them;
+/// a stopped one starts with them.
+async fn apply_settings(app: &AppHandle, before: (String, Option<String>, Option<String>)) {
+    let (engine, busy, (mode, model, effort)) = {
+        let rt = RT.lock().unwrap();
+        (rt.engine.clone(), rt.busy, chosen(rt.cfg.as_ref(), &rt))
+    };
+    if mode != before.0 {
+        if let Some(e) = &engine {
+            let id = e.next_id("mode");
+            let line = json!({ "type": "control_request", "request_id": id, "request": { "subtype": "set_permission_mode", "mode": mode } });
             if e.write(&line).await.is_ok() {
-                RT.lock().unwrap().model = Some(model.to_string());
-                note(app, format!("已切换到 {model}"));
+                RT.lock().unwrap().mode = Some(mode.clone());
             }
         }
-        None => {
-            RT.lock().unwrap().model = Some(model.to_string());
-            note(app, format!("之后用 {model}"));
+        note(app, format!("权限改为「{}」", mode_name(&mode)));
+    }
+    if model != before.1 {
+        if let (Some(e), Some(m)) = (&engine, &model) {
+            let id = e.next_id("model");
+            let line = json!({ "type": "control_request", "request_id": id, "request": { "subtype": "set_model", "model": m } });
+            if e.write(&line).await.is_ok() {
+                RT.lock().unwrap().model = Some(m.clone());
+            }
+        }
+        if let Some(m) = &model {
+            note(app, format!("已切换到 {m}"));
+        }
+    }
+    if effort != before.2 {
+        let name = effort_name(effort.as_deref().unwrap_or("max"));
+        if engine.is_some() {
+            // Claude Code takes the effort when it starts: it restarts, resuming.
+            if busy {
+                RT.lock().unwrap().restart_after_turn = true;
+            } else {
+                stop_engine(app, true);
+            }
+            note(app, format!("推理程度改为「{name}」，下一条指令开始生效"));
+        } else {
+            note(app, format!("推理程度改为「{name}」"));
         }
     }
     changed(app);
@@ -1165,7 +1400,7 @@ async fn sync_loop(app: AppHandle) {
     loop {
         let _ = tokio::time::timeout(SYNC_EVERY, SYNC.notified()).await;
         if let Ok(paths) = crate::config_paths(&app) {
-            refresh_models(&paths);
+            refresh_desktop(&paths);
         }
         if conversation_over(&RT.lock().unwrap(), Instant::now()) {
             end_conversation(&app, false).await;
@@ -1681,6 +1916,91 @@ mod tests {
         let mut none = rt(16 * 60, Some(600));
         none.session = None;
         assert!(!conversation_over(&none, now));
+    }
+
+    fn pairing(mode: Option<&str>, model: Option<&str>, effort: Option<&str>) -> Remote {
+        Remote {
+            user_id: 1,
+            pair_id: "p".into(),
+            pc_key: "k".into(),
+            folder: String::new(),
+            accept_edits: false,
+            on: true,
+            model: model.map(str::to_string),
+            mode: mode.map(str::to_string),
+            effort: effort.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn the_phone_follows_claude_desktop_unless_it_chose() {
+        let rt = Runtime {
+            models: vec!["claude-opus-5-5".into(), "claude-sonnet-5-5".into()],
+            defaults: Defaults {
+                mode: Some("acceptEdits".into()),
+                model: Some("claude-opus-5-5".into()),
+                effort: Some("max".into()),
+            },
+            ..Default::default()
+        };
+        let follow = pairing(None, None, None);
+        assert_eq!(
+            chosen(Some(&follow), &rt),
+            (
+                "acceptEdits".into(),
+                Some("claude-opus-5-5".into()),
+                Some("max".into())
+            )
+        );
+        assert_eq!(settings_view(Some(&follow), &rt)["custom"], json!([]));
+        // Nothing set anywhere, or a mode the phone doesn't offer: nothing asks.
+        assert_eq!(chosen(None, &Runtime::default()).0, "bypassPermissions");
+        let mut auto = Runtime::default();
+        auto.defaults.mode = Some("auto".into());
+        assert_eq!(chosen(None, &auto).0, "bypassPermissions");
+        // Chosen on the phone wins, while Claude Desktop still offers it.
+        let own = pairing(Some("default"), Some("claude-sonnet-5-5"), Some("low"));
+        assert_eq!(
+            chosen(Some(&own), &rt),
+            (
+                "default".into(),
+                Some("claude-sonnet-5-5".into()),
+                Some("low".into())
+            )
+        );
+        assert_eq!(
+            settings_view(Some(&own), &rt)["custom"],
+            json!(["mode", "model", "effort"])
+        );
+        let gone = pairing(Some("plan"), Some("claude-gone"), Some("extreme"));
+        assert_eq!(chosen(Some(&gone), &rt), chosen(Some(&follow), &rt));
+    }
+
+    #[test]
+    fn streamed_text_waiting_to_be_sent_goes_as_one_event() {
+        {
+            let mut rt = RT.lock().unwrap();
+            rt.listening = true;
+            rt.outbox.clear();
+        }
+        delta("m1:0", "你");
+        delta("m1:0", "好");
+        delta("m1:1", "!");
+        let sent: Vec<Value> = {
+            let mut rt = RT.lock().unwrap();
+            rt.listening = false;
+            rt.outbox.drain(..).collect()
+        };
+        assert_eq!(
+            sent,
+            vec![
+                json!({ "kind": "delta", "id": "m1:0", "text": "你好" }),
+                json!({ "kind": "delta", "id": "m1:1", "text": "!" }),
+            ]
+        );
+        // Not while nothing is sent to a phone.
+        delta("m1:0", "x");
+        assert!(RT.lock().unwrap().outbox.is_empty());
     }
 
     #[test]

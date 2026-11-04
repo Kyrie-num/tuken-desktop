@@ -514,12 +514,20 @@ pub async fn desktop_open(app: tauri::AppHandle, restart: bool) -> Result<(), St
     #[cfg(windows)]
     desktop_install(app.clone()).await?;
     let install = find_install().ok_or("未检测到 Claude Desktop")?;
-    claude_config::prepare_desktop_first_launch(&crate::config_paths(&app)?)?;
+    let paths = crate::config_paths(&app)?;
+    claude_config::prepare_desktop_first_launch(&paths)?;
     if restart {
         if cfg!(debug_assertions) {
             return Err("开发版不会重启 Claude Desktop，请手动重启".into());
         }
         quit_running(&install).await;
+    }
+    // Closed now (it reads its preferences only when it starts): new users
+    // get bypass permissions offered, and new conversations start in it.
+    if running_pids(&install.exe).is_empty() {
+        if let Err(why) = claude_config::seed_bypass(&paths) {
+            log::warn!("bypass permissions not offered: {why}");
+        }
     }
     launch(&install)
 }

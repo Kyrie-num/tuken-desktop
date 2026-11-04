@@ -896,6 +896,13 @@ describe("兔啃", () => {
         sync: false,
       }),
     );
+    // Claude follows Claude Desktop's settings, bypass permissions first.
+    expect(
+      within(sheet).getByRole("combobox", { name: "权限" }),
+    ).toHaveDisplayValue("全部自动");
+    expect(
+      within(sheet).getByText(/运行命令、改文件都不再在手机上问你/),
+    ).toBeInTheDocument();
     // The model Claude starts with, among Claude Desktop's.
     await user.selectOptions(
       within(sheet).getByRole("combobox", { name: "Claude 用的模型" }),
@@ -906,15 +913,27 @@ describe("兔啃", () => {
         model: "claude-sonnet-5-5",
       }),
     );
-
-    await user.click(
-      within(sheet).getByRole("checkbox", { name: /改文件不用手机确认/ }),
+    await user.selectOptions(
+      within(sheet).getByRole("combobox", { name: "权限" }),
+      "每次询问",
     );
     await waitFor(() =>
       expect(calls(invoke, "remote_set").at(-1)).toMatchObject({
-        accept_edits: true,
+        mode: "default",
       }),
     );
+    // Back to following Claude Desktop.
+    await user.click(
+      await within(sheet).findByRole("button", { name: "跟随 Claude Desktop" }),
+    );
+    await waitFor(() =>
+      expect(calls(invoke, "remote_set").at(-1)).toMatchObject({
+        follow: true,
+      }),
+    );
+    expect(
+      await within(sheet).findByRole("combobox", { name: "权限" }),
+    ).toHaveDisplayValue("全部自动");
     await user.click(within(sheet).getByRole("button", { name: "解除配对" }));
     expect(
       await within(sheet).findByRole("button", { name: "配对手机" }),

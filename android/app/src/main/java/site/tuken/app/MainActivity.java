@@ -92,7 +92,7 @@ public class MainActivity extends Activity {
         Uri uri = intent.getData();
         // A pairing link: the page takes the token from it.
         if (uri != null && inApp(uri)) {
-            web.loadUrl(uri.toString());
+            web.loadUrl(pageUrl(uri));
         }
     }
 
@@ -125,7 +125,21 @@ public class MainActivity extends Activity {
 
     private String start(Intent intent) {
         Uri uri = intent == null ? null : intent.getData();
-        return uri != null && inApp(uri) ? uri.toString() : HOME;
+        return uri != null && inApp(uri) ? pageUrl(uri) : HOME;
+    }
+
+    /**
+     * The page as it takes a pairing: the token in the fragment, never sent
+     * to the server. The browser hands it over in the query (an intent link
+     * can't carry a fragment); a fresh query makes the page load again, so
+     * it reads the token even when it is already open.
+     */
+    private static String pageUrl(Uri uri) {
+        String token = uri.getQueryParameter("t");
+        if (token == null || token.isEmpty()) {
+            return uri.toString();
+        }
+        return HOME + "?app=" + System.currentTimeMillis() + "#t=" + Uri.encode(token);
     }
 
     /** The phone page stays here; everything else opens in the browser. */

@@ -197,8 +197,12 @@ export function createMock(
       paired: remotePaired,
       on: remotePaired,
       folder: remotePaired ? "D:\\work\\tuken-app" : (null as string | null),
-      accept_edits: false,
-      model: "claude-opus-5-5",
+      settings: {
+        mode: "bypassPermissions",
+        model: "claude-opus-5-5" as string | null,
+        effort: "max" as string | null,
+        custom: [] as string[],
+      },
       models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
       sync: true,
       unsynced: remotePaired
@@ -798,16 +802,25 @@ export function createMock(
       case "remote_folder":
         db.remote.folder = "D:\\work\\tuken-app";
         return remoteView();
-      case "remote_set":
-        for (const k of [
-          "on",
-          "accept_edits",
-          "folder",
-          "model",
-          "sync",
-        ] as const)
+      case "remote_set": {
+        for (const k of ["on", "folder", "sync"] as const)
           if (input[k] !== undefined) (db.remote as any)[k] = input[k];
+        const s = db.remote.settings;
+        for (const k of ["mode", "model", "effort"] as const)
+          if (input[k] !== undefined) {
+            (s as any)[k] = input[k];
+            if (!s.custom.includes(k)) s.custom.push(k);
+          }
+        if (input.follow) {
+          Object.assign(s, {
+            mode: "bypassPermissions",
+            model: "claude-opus-5-5",
+            effort: "max",
+            custom: [],
+          });
+        }
         return remoteView();
+      }
       case "remote_sync":
         for (const u of db.remote.unsynced)
           db.remote.log.push({

@@ -52,6 +52,9 @@ pub struct Remote {
     pub pc_key: String,
     #[serde(default)]
     pub folder: String,
+    /// Before 0.4.2: file edits needed no approval. Now the mode follows
+    /// Claude Desktop (bypass permissions first) unless chosen; kept so old
+    /// vaults still read.
     #[serde(default)]
     pub accept_edits: bool,
     #[serde(default)]
@@ -59,6 +62,12 @@ pub struct Remote {
     /// The model chosen from the phone (or here) for Claude to start with.
     #[serde(default)]
     pub model: Option<String>,
+    /// The permission mode and effort chosen likewise; None follows
+    /// Claude Desktop.
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 /// A phone conversation waiting to be put into Claude Desktop.

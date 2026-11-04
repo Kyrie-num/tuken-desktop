@@ -220,6 +220,13 @@ export type Credit =
       limited: { amount: number; expires_at: string; source: string }[];
       first_recharge: { enabled: boolean; eligible: boolean; percent: number };
     };
+/** How much Claude may do without asking on the phone. */
+export type RemoteMode = "bypassPermissions" | "acceptEdits" | "default";
+export const REMOTE_MODES: readonly (readonly [RemoteMode, string])[] = [
+  ["bypassPermissions", "全部自动"],
+  ["acceptEdits", "改文件自动"],
+  ["default", "每次询问"],
+];
 /** One thing Claude did for the phone, as the window shows it. */
 export type RemoteEvent = {
   kind:
@@ -241,16 +248,21 @@ export type RemoteStatus = {
   /** Prompts from the phone are run. */
   on: boolean;
   folder: string | null;
-  /** File edits need no approval on the phone. */
-  accept_edits: boolean;
   listening: boolean;
   phone_online: boolean;
   busy: boolean;
   error: string | null;
   /** The latest events, oldest first. */
   log: RemoteEvent[];
-  /** The model Claude uses for the phone, and the ones it may switch to. */
-  model?: string | null;
+  /** What Claude runs with for the phone: Claude Desktop's defaults unless
+   * chosen here or on the phone (`custom` names those). */
+  settings?: {
+    mode: RemoteMode;
+    model: string | null;
+    effort: Effort | null;
+    custom: ("mode" | "model" | "effort")[];
+  };
+  /** The models it may switch to: Claude Desktop's. */
   models?: string[];
   /** Ended phone conversations go into Claude Desktop by themselves. */
   sync?: boolean;
