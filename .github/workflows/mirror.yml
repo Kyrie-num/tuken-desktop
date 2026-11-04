@@ -59,6 +59,7 @@ jobs:
               *.sig) type="text/plain; charset=utf-8" ;;
               *.dmg) type=application/x-apple-diskimage ;;
               *.tar.gz) type=application/gzip ;;
+              *.apk) type=application/vnd.android.package-archive ;;
               *) type=application/octet-stream ;;
             esac
             put "$f" "releases/$TAG/$name" "$type" "$kept"

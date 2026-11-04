@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tuken_cyan">#2BB7B3</color>
+    <color name="tuken_background">#F2F7F6</color>
+
+    <style name="Theme.Tuken" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/tuken_background</item>
+        <item name="android:statusBarColor">@color/tuken_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:colorAccent">#ED6C00</item>
+    </style>
+</resources>

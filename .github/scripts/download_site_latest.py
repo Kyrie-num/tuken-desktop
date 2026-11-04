@@ -15,8 +15,8 @@ import sys
 from urllib.parse import quote, unquote
 
 SITE = "https://download.tuken.site"
-# The installer people download, per system.
-DOWNLOADS = {"windows": "*_x64-setup.exe", "macos": "*_universal.dmg"}
+# The installer people download, per system (android: the phone app).
+DOWNLOADS = {"windows": "*_x64-setup.exe", "macos": "*_universal.dmg", "android": "*_android.apk"}
 
 
 def main(folder: str, tag: str) -> None:
