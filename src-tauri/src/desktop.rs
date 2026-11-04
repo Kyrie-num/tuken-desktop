@@ -308,6 +308,11 @@ fn launch(install: &Install) -> Result<(), String> {
 
 /// The Code engine of the installed Claude Desktop, for 手机遥控. A dev build
 /// may point `TUKEN_CLAUDE_CODE` at one, as its own data folder has none.
+/// Whether Claude Desktop is open: its own program, not Claude Code.
+pub fn running() -> bool {
+    find_install().is_some_and(|i| !running_pids(&i.exe).is_empty())
+}
+
 pub fn code_engine(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if cfg!(debug_assertions) {
         if let Some(p) = std::env::var_os("TUKEN_CLAUDE_CODE").map(PathBuf::from) {

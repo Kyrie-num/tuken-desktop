@@ -198,6 +198,18 @@ export function createMock(
       on: remotePaired,
       folder: remotePaired ? "D:\\work\\tuken-app" : (null as string | null),
       accept_edits: false,
+      model: "claude-opus-5-5",
+      models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+      sync: true,
+      unsynced: remotePaired
+        ? [
+            {
+              title: "把登录页的按钮改成橙色",
+              folder: "tuken-app",
+              ended: Date.now() - 6e5,
+            },
+          ]
+        : ([] as { title: string; folder: string; ended: number }[]),
       phone_online: remotePaired,
       log: remotePaired
         ? [
@@ -787,8 +799,22 @@ export function createMock(
         db.remote.folder = "D:\\work\\tuken-app";
         return remoteView();
       case "remote_set":
-        for (const k of ["on", "accept_edits", "folder"] as const)
+        for (const k of [
+          "on",
+          "accept_edits",
+          "folder",
+          "model",
+          "sync",
+        ] as const)
           if (input[k] !== undefined) (db.remote as any)[k] = input[k];
+        return remoteView();
+      case "remote_sync":
+        for (const u of db.remote.unsynced)
+          db.remote.log.push({
+            kind: "note",
+            text: `「${u.title}」已同步到电脑上的 Claude Desktop`,
+          });
+        db.remote.unsynced = [];
         return remoteView();
       case "remote_pair":
         db.remote.paired = true;
@@ -798,6 +824,7 @@ export function createMock(
           ...remoteView(),
           link: "https://www.tuken.site/remote#t=mock-phone-token",
           qr: mockQr(),
+          code: "20261104",
         };
       case "remote_unpair":
         db.remote.paired = false;

@@ -743,6 +743,7 @@ pub async fn tuken(
         "remote_set" => crate::remote::set(&app, state, &input).await,
         "remote_folder" => crate::remote::choose_folder(&app, state).await,
         "remote_unpair" => crate::remote::unpair(&app, state).await,
+        "remote_sync" => crate::remote::sync_now(&app, state).await,
         "logout" => {
             let id = match input["user_id"].as_i64() {
                 Some(id) => id,

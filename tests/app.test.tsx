@@ -882,6 +882,30 @@ describe("兔啃", () => {
     ).toBeInTheDocument();
     expect(calls(invoke, "remote_pair")).toHaveLength(1);
     expect(calls(invoke, "remote_pair")[0]).toMatchObject({ as_user: 1 });
+    // Or typed into the phone app.
+    expect(within(sheet).getByText("2026 1104")).toBeInTheDocument();
+
+    // The phone's conversations go into Claude Desktop unless switched off.
+    const sync = within(sheet).getByRole("checkbox", {
+      name: /同步到 Claude Desktop/,
+    });
+    expect(sync).toBeChecked();
+    await user.click(sync);
+    await waitFor(() =>
+      expect(calls(invoke, "remote_set").at(-1)).toMatchObject({
+        sync: false,
+      }),
+    );
+    // The model Claude starts with, among Claude Desktop's.
+    await user.selectOptions(
+      within(sheet).getByRole("combobox", { name: "Claude 用的模型" }),
+      "claude-sonnet-5-5",
+    );
+    await waitFor(() =>
+      expect(calls(invoke, "remote_set").at(-1)).toMatchObject({
+        model: "claude-sonnet-5-5",
+      }),
+    );
 
     await user.click(
       within(sheet).getByRole("checkbox", { name: /改文件不用手机确认/ }),
@@ -896,6 +920,29 @@ describe("兔啃", () => {
       await within(sheet).findByRole("button", { name: "配对手机" }),
     ).toBeInTheDocument();
     expect(within(sheet).queryByRole("img", { name: "配对二维码" })).toBeNull();
+  });
+
+  it("puts waiting phone conversations into Claude Desktop on request", async () => {
+    const user = userEvent.setup();
+    const invoke = show("ok", { remotePaired: true });
+    const row = (await screen.findByText("手机遥控")).closest(
+      "div",
+    )!.parentElement!;
+    await user.click(within(row).getByRole("button", { name: "设置" }));
+    const sheet = await screen.findByRole("dialog", { name: "手机遥控" });
+    expect(
+      await within(sheet).findByText(
+        /1 段对话等待同步：把登录页的按钮改成橙色/,
+      ),
+    ).toBeInTheDocument();
+    await user.click(within(sheet).getByRole("button", { name: "现在同步" }));
+    expect(calls(invoke, "remote_sync")).toHaveLength(1);
+    expect(
+      await within(sheet).findByText(/已同步到电脑上的 Claude Desktop/),
+    ).toBeInTheDocument();
+    expect(
+      within(sheet).queryByRole("button", { name: "现在同步" }),
+    ).toBeNull();
   });
 
   it("only reads when it opens: no key, order, install or Claude Desktop change", async () => {

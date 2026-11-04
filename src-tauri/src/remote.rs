@@ -8,6 +8,14 @@
 //!   key. Its output becomes short events for the phone and this window,
 //!   posted in batches by `send_loop`.
 //! - A permission prompt waits for the phone's 允许 / 拒绝 (10 minutes).
+//! - The phone may switch Claude's model among Claude Desktop's (set_model).
+//! - A phone conversation that has ended (新对话, the phone away for a
+//!   minute, or quiet for 15) goes into Claude Desktop's list through its own
+//!   import link, `claude://resume?session=<id>`: Claude Desktop shows a
+//!   terminal conversation only once imported, and only as it was then. So
+//!   it goes in once, when it is over, while Claude Desktop is open and the
+//!   computer isn't being used (the import brings Claude Desktop to the
+//!   front); talking on after that continues in a copy of it.
 //!
 //! The relay only sees pc_key. The phone's token is shown once as a QR code
 //! and never kept here.
@@ -27,7 +35,7 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::Notify;
 
 use crate::api::SITE;
-use crate::vault::Remote;
+use crate::vault::{Remote, RemoteSync};
 use crate::State;
 
 /// How long a permission prompt waits for the phone.
@@ -38,6 +46,17 @@ const OUTBOX_MAX: usize = 500;
 /// Text from Claude Code sent to the phone, per event.
 const TEXT_MAX: usize = 20_000;
 const DETAIL_MAX: usize = 1_500;
+/// A phone conversation is over after this long without a turn, or when
+/// the phone has been away for PHONE_GONE and the last turn was QUIET ago.
+const CONVERSATION_IDLE: Duration = Duration::from_secs(15 * 60);
+const PHONE_GONE: Duration = Duration::from_secs(60);
+const QUIET: Duration = Duration::from_secs(120);
+/// Claude Desktop jumps to an imported conversation: only after this long
+/// without keyboard or mouse, unless asked to now.
+const PC_IDLE: Duration = Duration::from_secs(90);
+const SYNC_EVERY: Duration = Duration::from_secs(20);
+const SYNC_TRIES: u32 = 3;
+const UNSYNCED_MAX: usize = 20;
 
 #[derive(Default)]
 struct Runtime {
@@ -57,10 +76,25 @@ struct Runtime {
     session: Option<String>,
     /// What the engine has spent so far: its results count from its start.
     spent: f64,
+    /// Claude Desktop's models, the ones the phone may choose from.
+    models: Vec<String>,
+    /// The folder the engine (and so the conversation) works in.
+    folder: Option<String>,
+    /// The conversation's first prompt, and its last turn.
+    title: Option<String>,
+    last_turn: Option<Instant>,
+    /// Since when the phone has been away.
+    phone_gone: Option<Instant>,
+    /// The conversation in `session` is over (queued for Claude Desktop);
+    /// the next prompt continues it in a copy (`--fork-session`).
+    ended: bool,
+    /// Put conversations into Claude Desktop now, whatever the computer does.
+    sync_now: bool,
 }
 
 static RT: LazyLock<Mutex<Runtime>> = LazyLock::new(Default::default);
 static OUTBOX: LazyLock<Notify> = LazyLock::new(Notify::new);
+static SYNC: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 struct Engine {
     stdin: tokio::sync::Mutex<ChildStdin>,
@@ -180,12 +214,13 @@ async fn relay(
 
 // ---------------------------------------------------------------- state for the UI
 
-fn status_view(cfg: Option<&Remote>, chosen: Option<&String>) -> Value {
+fn status_view(v: &crate::vault::Vault) -> Value {
+    let cfg = v.remote.as_ref();
     let rt = RT.lock().unwrap();
     let folder = cfg
         .map(|c| c.folder.clone())
         .filter(|f| !f.is_empty())
-        .or_else(|| chosen.cloned());
+        .or_else(|| v.remote_folder.clone());
     json!({
         "supported": cfg!(any(windows, target_os = "macos")),
         "paired": cfg.is_some(),
@@ -196,6 +231,10 @@ fn status_view(cfg: Option<&Remote>, chosen: Option<&String>) -> Value {
         "phone_online": rt.phone_online,
         "busy": rt.busy,
         "error": rt.error,
+        "model": rt.model.clone().or_else(|| cfg.and_then(|c| c.model.clone())),
+        "models": rt.models,
+        "sync": !v.remote_sync_off,
+        "unsynced": v.remote_unsynced.iter().map(|u| json!({ "title": u.title, "folder": folder_name(&u.folder), "ended": u.ended })).collect::<Vec<_>>(),
         "log": rt.log.iter().cloned().collect::<Vec<_>>(),
     })
 }
@@ -203,7 +242,7 @@ fn status_view(cfg: Option<&Remote>, chosen: Option<&String>) -> Value {
 /// What the window shows: pairing, switch, folder, and the latest events.
 pub async fn status(state: &State) -> Result<Value, String> {
     let v = state.vault().await?;
-    Ok(status_view(v.remote.as_ref(), v.remote_folder.as_ref()))
+    Ok(status_view(&v))
 }
 
 fn folder_name(folder: &str) -> String {
@@ -218,7 +257,8 @@ fn phone_status(cfg: &Remote) -> Value {
     let rt = RT.lock().unwrap();
     json!({
         "folder": folder_name(&cfg.folder),
-        "model": rt.model,
+        "model": rt.model.clone().or_else(|| cfg.model.clone()).or_else(|| rt.models.first().cloned()),
+        "models": rt.models,
         "busy": rt.busy,
         "mode": if cfg.accept_edits { "acceptEdits" } else { "default" },
     })
@@ -282,6 +322,7 @@ pub async fn paired(
         .filter(|f| Path::new(f).is_dir())
         .unwrap_or_default();
     let accept_edits = v.remote.as_ref().is_some_and(|r| r.accept_edits);
+    let model = v.remote.as_ref().and_then(|r| r.model.clone());
     v.remote = Some(Remote {
         user_id,
         pair_id: pair_id.into(),
@@ -289,6 +330,7 @@ pub async fn paired(
         folder,
         accept_edits,
         on: true,
+        model,
     });
     state.save(&v)?;
     let cfg = v.remote.clone();
@@ -299,11 +341,15 @@ pub async fn paired(
     let mut view = status(state).await?;
     view["link"] = json!(url);
     view["qr"] = json!({ "size": size, "path": path });
+    // Typed into the phone app instead of scanning; shown once, 10 minutes.
+    view["code"] = json!(data["code"].as_str().filter(|c| c.len() == 8));
     Ok(view)
 }
 
 /// Ends the pairing, on the server too, so the phone can't get in any more.
 pub async fn unpair(app: &AppHandle, state: &State) -> Result<Value, String> {
+    // What was said on the phone still goes into Claude Desktop.
+    end_conversation(app, true).await;
     let key = state
         .vault()
         .await?
@@ -350,12 +396,20 @@ pub async fn set(app: &AppHandle, state: &State, input: &Value) -> Result<Value,
         return Err("先在手机上扫码配对".into());
     };
     let mut restart_engine = false;
+    let mut new_folder = false;
     if let Some(folder) = input["folder"].as_str() {
         if !Path::new(folder).is_dir() {
             return Err("这个文件夹不存在".into());
         }
-        restart_engine |= cfg.folder != folder;
+        new_folder = cfg.folder != folder;
+        restart_engine |= new_folder;
         cfg.folder = folder.into();
+    }
+    if let Some(model) = input["model"].as_str() {
+        if !RT.lock().unwrap().models.iter().any(|m| m == model) {
+            return Err("Claude Desktop 里没有这个模型".into());
+        }
+        cfg.model = Some(model.into());
     }
     if let Some(accept) = input["accept_edits"].as_bool() {
         restart_engine |= cfg.accept_edits != accept;
@@ -365,8 +419,21 @@ pub async fn set(app: &AppHandle, state: &State, input: &Value) -> Result<Value,
         cfg.on = on;
     }
     let cfg = cfg.clone();
+    if let Some(sync) = input["sync"].as_bool() {
+        v.remote_sync_off = !sync;
+    }
     state.save(&v)?;
     drop(v);
+    if let Some(model) = input["model"].as_str() {
+        apply_model(app, model).await;
+    }
+    if new_folder {
+        // Another project: the conversation so far is over, the next starts afresh.
+        end_conversation(app, true).await;
+        let mut rt = RT.lock().unwrap();
+        rt.session = None;
+        rt.ended = false;
+    }
     if restart_engine {
         // The next prompt starts Claude Code again, in the new folder or mode.
         stop_engine(app, true);
@@ -393,6 +460,10 @@ fn restart(app: &AppHandle, cfg: Option<Remote>) {
     match cfg {
         Some(cfg) if cfg.on => {
             RT.lock().unwrap().listening = true;
+            // The phone's model list, from the start.
+            if let Ok(paths) = crate::config_paths(app) {
+                refresh_models(&paths);
+            }
             let a = app.clone();
             let c = cfg.clone();
             tauri::async_runtime::spawn(async move { listen(a, c, generation).await });
@@ -420,6 +491,8 @@ pub fn start_worker(app: AppHandle) {
             };
             if let Some(cfg) = opened {
                 restart(&app, cfg);
+                let a = app.clone();
+                tauri::async_runtime::spawn(async move { sync_loop(a).await });
                 return;
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -456,6 +529,11 @@ async fn listen(app: AppHandle, cfg: Remote, generation: u64) {
                     let online = data["phone_online"] == true;
                     let was = rt.phone_online;
                     rt.phone_online = online;
+                    if online {
+                        rt.phone_gone = None;
+                    } else if rt.phone_gone.is_none() {
+                        rt.phone_gone = Some(Instant::now());
+                    }
                     let had_error = rt.error.take().is_some();
                     drop(rt);
                     if was != online || had_error {
@@ -564,9 +642,25 @@ async fn handle(app: &AppHandle, cfg: &Remote, msg: &Value) {
             }
         }
         Some("new") => {
-            stop_engine(app, true);
-            RT.lock().unwrap().session = None;
+            end_conversation(app, true).await;
+            let mut rt = RT.lock().unwrap();
+            rt.session = None;
+            rt.ended = false;
+            drop(rt);
             note(app, "已开始新对话");
+        }
+        Some("model") => {
+            let model = msg["model"].as_str().unwrap_or("");
+            let state = app.state::<State>();
+            match set(app, &state, &json!({ "model": model })).await {
+                Ok(_) => {}
+                Err(why) => note(app, why),
+            }
+        }
+        Some("sync") => {
+            end_conversation(app, false).await;
+            RT.lock().unwrap().sync_now = true;
+            SYNC.notify_one();
         }
         _ => {}
     }
@@ -586,6 +680,13 @@ async fn prompt(app: &AppHandle, cfg: &Remote, text: &str) {
         },
     };
     event(app, json!({ "kind": "user", "text": text }));
+    {
+        let mut rt = RT.lock().unwrap();
+        rt.last_turn = Some(Instant::now());
+        if rt.title.is_none() {
+            rt.title = Some(clip(text.lines().next().unwrap_or(text), 60));
+        }
+    }
     set_busy(app, true);
     let line = json!({
         "type": "user",
@@ -618,6 +719,7 @@ async fn answer(app: &AppHandle, request_id: &str, allow: bool) {
         "response": { "subtype": "success", "request_id": request_id, "response": response },
     });
     let _ = engine.write(&reply).await;
+    RT.lock().unwrap().last_turn = Some(Instant::now());
     event(
         app,
         json!({ "kind": "asked", "request_id": request_id, "allowed": allow }),
@@ -652,9 +754,16 @@ async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
     let key = crate::claude_config::desktop_key(&paths)
         .or_else(|| crate::claude_config::cli_key(&paths))
         .ok_or("电脑上的兔啃还没接入 Claude Desktop：请先在首页点「一键接入」")?;
-    let models = crate::claude_config::desktop_models(&paths).unwrap_or_default();
-    let model = models["models"][0].as_str().map(str::to_string);
-    let effort = models["effort"].as_str().map(str::to_string);
+    let models = refresh_models(&paths);
+    // The one chosen from the phone, while Claude Desktop still offers it.
+    let model = cfg
+        .model
+        .clone()
+        .filter(|m| models.contains(m))
+        .or_else(|| models.first().cloned());
+    let effort = crate::claude_config::desktop_models(&paths).unwrap_or_default()["effort"]
+        .as_str()
+        .map(str::to_string);
 
     let mut args: Vec<String> = [
         "--output-format",
@@ -677,9 +786,18 @@ async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
     if let Some(e) = &effort {
         args.extend(["--effort".into(), e.clone()]);
     }
-    let resume = RT.lock().unwrap().session.clone();
-    if let Some(s) = &resume {
-        args.extend(["--resume".into(), s.clone()]);
+    let (resume, fork) = {
+        let rt = RT.lock().unwrap();
+        (rt.session.clone(), rt.ended)
+    };
+    // Continue the conversation, unless its record is gone. One that went
+    // into Claude Desktop continues in a copy: Claude Desktop shows it as
+    // it was when it went in, and may go on with it itself.
+    if let Some(s) = resume.filter(|s| transcript_exists(&paths, s)) {
+        args.extend(["--resume".into(), s]);
+        if fork {
+            args.push("--fork-session".into());
+        }
     }
 
     let mut command = Command::new(&exe);
@@ -733,6 +851,12 @@ async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
         rt.engine = Some(engine.clone());
         rt.model = model.clone();
         rt.spent = 0.0;
+        rt.folder = Some(cfg.folder.clone());
+        if rt.ended {
+            // A new conversation, in Claude Desktop's eyes.
+            rt.ended = false;
+            rt.session = None;
+        }
     }
     let init = engine.next_id("init");
     engine
@@ -859,8 +983,12 @@ async fn output(app: &AppHandle, engine: &Arc<Engine>, folder: &str, v: &Value) 
             if !ok {
                 e["text"] = json!(clip(v["result"].as_str().unwrap_or(""), 300));
             }
-            if let Some(s) = v["session_id"].as_str() {
-                RT.lock().unwrap().session = Some(s.to_string());
+            {
+                let mut rt = RT.lock().unwrap();
+                if let Some(s) = v["session_id"].as_str() {
+                    rt.session = Some(s.to_string());
+                }
+                rt.last_turn = Some(Instant::now());
             }
             event(app, e);
             set_busy(app, false);
@@ -917,6 +1045,314 @@ async fn output(app: &AppHandle, engine: &Arc<Engine>, folder: &str, v: &Value) 
         }
         _ => {}
     }
+}
+
+// ---------------------------------------------------------------- model
+
+/// Claude Desktop's models (the ones 兔啃 set there), kept for the phone.
+fn refresh_models(paths: &crate::claude_config::Paths) -> Vec<String> {
+    let models: Vec<String> = crate::claude_config::desktop_models(paths)
+        .and_then(|m| {
+            m["models"].as_array().map(|ms| {
+                ms.iter()
+                    .filter_map(|m| m.as_str().map(str::to_string))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    RT.lock().unwrap().models = models.clone();
+    models
+}
+
+/// Switches the running engine to `model`; a stopped one starts with it.
+async fn apply_model(app: &AppHandle, model: &str) {
+    let engine = RT.lock().unwrap().engine.clone();
+    match engine {
+        Some(e) => {
+            let id = e.next_id("model");
+            let line = json!({ "type": "control_request", "request_id": id, "request": { "subtype": "set_model", "model": model } });
+            if e.write(&line).await.is_ok() {
+                RT.lock().unwrap().model = Some(model.to_string());
+                note(app, format!("已切换到 {model}"));
+            }
+        }
+        None => {
+            RT.lock().unwrap().model = Some(model.to_string());
+            note(app, format!("之后用 {model}"));
+        }
+    }
+    changed(app);
+}
+
+// ---------------------------------------------------------------- Claude Desktop sync
+
+/// Ends the phone conversation: the engine stops, the conversation is queued
+/// for Claude Desktop, and the next prompt continues it in a copy. `quiet`:
+/// no word about it.
+async fn end_conversation(app: &AppHandle, quiet: bool) -> bool {
+    let (session, folder, title) = {
+        let mut rt = RT.lock().unwrap();
+        let Some(session) = rt.session.clone().filter(|_| !rt.ended) else {
+            return false;
+        };
+        rt.ended = true;
+        (
+            session,
+            rt.folder.clone().unwrap_or_default(),
+            rt.title.take().unwrap_or_default(),
+        )
+    };
+    let engine = RT.lock().unwrap().engine.clone();
+    if let Some(e) = engine {
+        if RT.lock().unwrap().busy {
+            let id = e.next_id("stop");
+            let _ = e
+                .write(&json!({ "type": "control_request", "request_id": id, "request": { "subtype": "interrupt" } }))
+                .await;
+            tokio::time::sleep(Duration::from_millis(800)).await;
+        }
+    }
+    stop_engine(app, true);
+    let state = app.state::<State>();
+    if let Ok(mut v) = state.vault().await {
+        if !v.remote_unsynced.iter().any(|u| u.session == session) {
+            v.remote_unsynced.push(RemoteSync {
+                session,
+                folder,
+                title,
+                ended: chrono_now_ms(),
+                tries: 0,
+            });
+            let extra = v.remote_unsynced.len().saturating_sub(UNSYNCED_MAX);
+            v.remote_unsynced.drain(..extra);
+            let _ = state.save(&v);
+        }
+    }
+    if !quiet {
+        note(app, "这段对话结束了，会同步到电脑上的 Claude Desktop");
+    }
+    SYNC.notify_one();
+    changed(app);
+    true
+}
+
+fn chrono_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default()
+}
+
+/// Whether the conversation is over by now: no turn running or waiting for
+/// the phone, and the phone away for a while, or nothing for long.
+fn conversation_over(rt: &Runtime, now: Instant) -> bool {
+    if rt.session.is_none() || rt.ended || rt.busy || !rt.pending.is_empty() {
+        return false;
+    }
+    let Some(last) = rt.last_turn else {
+        return false;
+    };
+    let quiet = now.duration_since(last);
+    quiet >= CONVERSATION_IDLE
+        || rt
+            .phone_gone
+            .is_some_and(|g| now.duration_since(g) >= PHONE_GONE && quiet >= QUIET)
+}
+
+/// Puts ended phone conversations into Claude Desktop, one at a time.
+async fn sync_loop(app: AppHandle) {
+    let mut was_idle = false;
+    loop {
+        let _ = tokio::time::timeout(SYNC_EVERY, SYNC.notified()).await;
+        if let Ok(paths) = crate::config_paths(&app) {
+            refresh_models(&paths);
+        }
+        if conversation_over(&RT.lock().unwrap(), Instant::now()) {
+            end_conversation(&app, false).await;
+        }
+        let state = app.state::<State>();
+        let (next, off) = match state.vault_if_open().await {
+            Some(v) => (v.remote_unsynced.first().cloned(), v.remote_sync_off),
+            None => continue,
+        };
+        let now_asked = std::mem::take(&mut RT.lock().unwrap().sync_now);
+        let Some(item) = next else {
+            continue;
+        };
+        if off && !now_asked {
+            continue;
+        }
+        // Claude Desktop jumps to what it imports: not while the computer is in use.
+        let idle = pc_idle().await.is_none_or(|d| d >= PC_IDLE);
+        let back = was_idle && !idle;
+        was_idle = idle;
+        if !(now_asked || idle || back) || !sync_allowed() || !crate::desktop::running() {
+            continue;
+        }
+        let done = sync_one(&app, &item).await;
+        if let Ok(mut v) = state.vault().await {
+            if let Some(pos) = v
+                .remote_unsynced
+                .iter()
+                .position(|u| u.session == item.session)
+            {
+                if done {
+                    v.remote_unsynced.remove(pos);
+                } else {
+                    v.remote_unsynced[pos].tries += 1;
+                    if v.remote_unsynced[pos].tries >= SYNC_TRIES {
+                        // Its record may be gone; Claude Desktop says why in its own log.
+                        v.remote_unsynced.remove(pos);
+                        note(&app, "有一段手机上的对话没能同步到 Claude Desktop");
+                    }
+                }
+                let _ = state.save(&v);
+            }
+        }
+        changed(&app);
+        if done {
+            // The rest follow, a moment apart.
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            SYNC.notify_one();
+        }
+    }
+}
+
+/// A dev build's Claude Code keeps its conversations in a sandbox the real
+/// Claude Desktop can't import from.
+fn sync_allowed() -> bool {
+    !cfg!(debug_assertions) || std::env::var("TUKEN_REMOTE_SYNC").is_ok_and(|v| v == "1")
+}
+
+/// Asks Claude Desktop to import the conversation, and waits for its record.
+async fn sync_one(app: &AppHandle, item: &RemoteSync) -> bool {
+    use tauri_plugin_opener::OpenerExt;
+    let Ok(paths) = crate::config_paths(app) else {
+        return false;
+    };
+    if !is_uuid(&item.session) || !transcript_exists(&paths, &item.session) {
+        return false;
+    }
+    if desktop_has(&paths, &item.session) {
+        return true; // already there, imported or continued in Claude Desktop
+    }
+    let url = format!("claude://resume?session={}", item.session);
+    if app.opener().open_url(&url, None::<&str>).is_err() {
+        return false;
+    }
+    for _ in 0..15 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if desktop_has(&paths, &item.session) {
+            let what = if item.title.is_empty() {
+                "手机上的对话".to_string()
+            } else {
+                format!("「{}」", item.title)
+            };
+            note(app, format!("{what}已同步到电脑上的 Claude Desktop"));
+            return true;
+        }
+    }
+    false
+}
+
+/// Claude Desktop has a record of this conversation (`local_<id>.json`).
+fn desktop_has(paths: &crate::claude_config::Paths, session: &str) -> bool {
+    let Some(root) = paths.desktop_sessions() else {
+        return false;
+    };
+    let name = format!("local_{session}.json");
+    // <account>/<org>/local_<id>.json
+    std::fs::read_dir(&root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|account| {
+            std::fs::read_dir(account.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|org| org.path().join(&name).is_file())
+        })
+}
+
+/// Claude Code still has the conversation (`<projects>/*/<id>.jsonl`).
+fn transcript_exists(paths: &crate::claude_config::Paths, session: &str) -> bool {
+    if !is_uuid(session) {
+        return false;
+    }
+    let projects = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|_| !cfg!(debug_assertions))
+        .map(|d| std::path::PathBuf::from(d).join("projects"))
+        .or_else(|| paths.cli_projects());
+    let Some(projects) = projects else {
+        return false;
+    };
+    let name = format!("{session}.jsonl");
+    std::fs::read_dir(projects)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|dir| dir.path().join(&name).is_file())
+}
+
+fn is_uuid(s: &str) -> bool {
+    s.len() == 36
+        && s.char_indices().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
+/// How long since the last keyboard or mouse input; None if unknown.
+#[cfg(windows)]
+async fn pc_idle() -> Option<Duration> {
+    use windows_sys::Win32::System::SystemInformation::GetTickCount;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+    let mut info = LASTINPUTINFO {
+        cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+        dwTime: 0,
+    };
+    // SAFETY: a plain call with a sized struct.
+    if unsafe { GetLastInputInfo(&mut info) } == 0 {
+        return None;
+    }
+    let now = unsafe { GetTickCount() };
+    Some(Duration::from_millis(u64::from(
+        now.wrapping_sub(info.dwTime),
+    )))
+}
+
+#[cfg(target_os = "macos")]
+async fn pc_idle() -> Option<Duration> {
+    let out = Command::new("/usr/sbin/ioreg")
+        .args(["-c", "IOHIDSystem", "-d", "4"])
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().find(|l| l.contains("\"HIDIdleTime\""))?;
+    let nanos: u64 = line.rsplit('=').next()?.trim().parse().ok()?;
+    Some(Duration::from_nanos(nanos))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+async fn pc_idle() -> Option<Duration> {
+    None
+}
+
+/// Puts the phone conversations into Claude Desktop now (the button here).
+pub async fn sync_now(app: &AppHandle, state: &State) -> Result<Value, String> {
+    if !crate::desktop::running() {
+        return Err("请先打开 Claude Desktop".into());
+    }
+    if !sync_allowed() {
+        return Err("开发版不同步到 Claude Desktop".into());
+    }
+    end_conversation(app, true).await;
+    RT.lock().unwrap().sync_now = true;
+    SYNC.notify_one();
+    status(state).await
 }
 
 // ---------------------------------------------------------------- words for the phone
@@ -1206,6 +1642,52 @@ mod tests {
     fn long_text_is_clipped_by_characters() {
         assert_eq!(clip("一二三四", 3), "一二三…");
         assert_eq!(clip("短", 3), "短");
+    }
+
+    #[test]
+    fn a_conversation_is_over_when_the_phone_is_away_or_it_is_long_quiet() {
+        let now = Instant::now();
+        let ago = |s: u64| now.checked_sub(Duration::from_secs(s));
+        let rt = |last: u64, gone: Option<u64>| Runtime {
+            session: Some("6f1e1d2c-0000-4000-8000-000000000001".into()),
+            last_turn: ago(last),
+            phone_gone: gone.and_then(ago),
+            ..Default::default()
+        };
+        // The phone is still there: only a long quiet ends it.
+        assert!(!conversation_over(&rt(5 * 60, None), now));
+        assert!(conversation_over(&rt(16 * 60, None), now));
+        // The phone went away a minute ago and the last turn was a while back.
+        assert!(conversation_over(&rt(3 * 60, Some(70)), now));
+        assert!(
+            !conversation_over(&rt(30, Some(70)), now),
+            "a turn just finished"
+        );
+        assert!(
+            !conversation_over(&rt(3 * 60, Some(20)), now),
+            "the phone just went"
+        );
+        // Not while Claude works or waits for an answer, nor twice.
+        let mut busy = rt(16 * 60, Some(600));
+        busy.busy = true;
+        assert!(!conversation_over(&busy, now));
+        let mut asking = rt(16 * 60, Some(600));
+        asking.pending.insert("r1".into(), json!({}));
+        assert!(!conversation_over(&asking, now));
+        let mut ended = rt(16 * 60, Some(600));
+        ended.ended = true;
+        assert!(!conversation_over(&ended, now));
+        let mut none = rt(16 * 60, Some(600));
+        none.session = None;
+        assert!(!conversation_over(&none, now));
+    }
+
+    #[test]
+    fn only_real_session_ids_go_into_links() {
+        assert!(is_uuid("1986d9fb-ee6a-441d-85be-067dbf00bbd8"));
+        assert!(!is_uuid("1986d9fb-ee6a-441d-85be-067dbf00bbd8&x=1"));
+        assert!(!is_uuid("../../etc/passwd-0000-0000-0000-000000"));
+        assert!(!is_uuid(""));
     }
 
     #[test]

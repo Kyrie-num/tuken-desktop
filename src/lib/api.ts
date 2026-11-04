@@ -249,9 +249,18 @@ export type RemoteStatus = {
   error: string | null;
   /** The latest events, oldest first. */
   log: RemoteEvent[];
+  /** The model Claude uses for the phone, and the ones it may switch to. */
+  model?: string | null;
+  models?: string[];
+  /** Ended phone conversations go into Claude Desktop by themselves. */
+  sync?: boolean;
+  /** Phone conversations still to go into Claude Desktop, oldest first. */
+  unsynced?: { title: string; folder: string; ended: number }[];
   /** Right after pairing only: the phone's link and its QR code. */
   link?: string;
   qr?: { size: number; path: string };
+  /** Right after pairing only: the code to type into the phone app. */
+  code?: string | null;
 };
 /** Inviting friends: my code, what an invite brings, and how it went. */
 export type Invite =

@@ -56,6 +56,26 @@ pub struct Remote {
     pub accept_edits: bool,
     #[serde(default)]
     pub on: bool,
+    /// The model chosen from the phone (or here) for Claude to start with.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// A phone conversation waiting to be put into Claude Desktop.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RemoteSync {
+    /// Claude Code's session id.
+    pub session: String,
+    #[serde(default)]
+    pub folder: String,
+    /// The first prompt, for the list here.
+    #[serde(default)]
+    pub title: String,
+    /// When the conversation ended, Unix ms.
+    #[serde(default)]
+    pub ended: i64,
+    #[serde(default)]
+    pub tries: u32,
 }
 
 /// Orders the worker still has to finish.
@@ -94,6 +114,13 @@ pub struct Vault {
     /// The folder of a pairing that ended, offered again when pairing anew.
     #[serde(default)]
     pub remote_folder: Option<String>,
+    /// Phone conversations still to be put into Claude Desktop, oldest first.
+    /// Kept apart from the pairing: unpairing doesn't lose them.
+    #[serde(default)]
+    pub remote_unsynced: Vec<RemoteSync>,
+    /// Phone conversations are not put into Claude Desktop by themselves.
+    #[serde(default)]
+    pub remote_sync_off: bool,
 }
 
 impl Vault {

@@ -180,6 +180,17 @@ impl Paths {
             .join("claude-code"))
     }
 
+    /// Claude Desktop's records of its Code sessions, each at
+    /// `<account>/<org>/local_<session>.json`.
+    pub fn desktop_sessions(&self) -> Option<PathBuf> {
+        Some(self.library.parent()?.join("claude-code-sessions"))
+    }
+
+    /// Claude Code's conversations, `<cwd as a name>/<session>.jsonl`.
+    pub fn cli_projects(&self) -> Option<PathBuf> {
+        Some(self.cli_settings.parent()?.join("projects"))
+    }
+
     fn profile(&self, id: &str) -> PathBuf {
         self.library.join(format!("{id}.json"))
     }
