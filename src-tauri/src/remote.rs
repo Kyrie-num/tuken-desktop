@@ -1646,8 +1646,9 @@ mod tests {
 
     #[test]
     fn a_conversation_is_over_when_the_phone_is_away_or_it_is_long_quiet() {
-        let now = Instant::now();
-        let ago = |s: u64| now.checked_sub(Duration::from_secs(s));
+        // An hour ahead: going back from now can't, on a machine up for minutes.
+        let now = Instant::now() + Duration::from_secs(3600);
+        let ago = |s: u64| Some(now - Duration::from_secs(s));
         let rt = |last: u64, gone: Option<u64>| Runtime {
             session: Some("6f1e1d2c-0000-4000-8000-000000000001".into()),
             last_turn: ago(last),
