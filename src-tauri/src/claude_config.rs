@@ -513,18 +513,11 @@ pub fn seed_bypass(p: &Paths) -> Result<bool, String> {
     let dir = p.threep_config.parent().ok_or("配置目录无效")?;
     let did = dir.join("ant-did");
     let device = match std::fs::read(&did) {
-        Ok(bytes) => {
-            let decoded = STANDARD
-                .decode(String::from_utf8_lossy(&bytes).trim())
-                .ok()
-                .and_then(|b| String::from_utf8(b).ok())
-                .map(|s| s.trim().to_string());
-            match decoded.filter(|u| uuid::Uuid::parse_str(u).is_ok() && u.len() == 36) {
-                Some(u) => u.to_lowercase(),
-                // Claude Desktop replaces what it can't read; leave it to it.
-                None => return Ok(false),
-            }
-        }
+        Ok(bytes) => match decode_device_id(&bytes) {
+            Some(u) => u,
+            // Claude Desktop replaces what it can't read; leave it to it.
+            None => return Ok(false),
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let fresh = uuid::Uuid::new_v4().to_string();
             write_device_id(&did, &STANDARD.encode(&fresh))?;
@@ -558,6 +551,24 @@ pub fn seed_bypass(p: &Paths) -> Result<bool, String> {
     }
     config.write(&p.backups)?;
     Ok(true)
+}
+
+/// The device id in `ant-did`: base64 of a UUID, lowercase.
+fn decode_device_id(bytes: &[u8]) -> Option<String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    STANDARD
+        .decode(String::from_utf8_lossy(bytes).trim())
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|u| uuid::Uuid::parse_str(u).is_ok() && u.len() == 36)
+}
+
+/// Claude Desktop's device id in gateway mode, which its records of Code
+/// conversations are kept under; None before its first start.
+pub fn device_id(p: &Paths) -> Option<String> {
+    let did = p.threep_config.parent()?.join("ant-did");
+    decode_device_id(&std::fs::read(did).ok()?)
 }
 
 /// Claude Desktop's device id file, as it writes it: once, owner only.

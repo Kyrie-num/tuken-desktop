@@ -14,13 +14,20 @@
 //! - Claude's text streams to the phone as it is written (partial messages).
 //! - A permission prompt, in the modes that ask, waits for the phone's
 //!   允许 / 拒绝 (10 minutes).
-//! - A phone conversation that has ended (新对话, the phone away for a
-//!   minute, or quiet for 15) goes into Claude Desktop's list through its own
-//!   import link, `claude://resume?session=<id>`: Claude Desktop shows a
-//!   terminal conversation only once imported, and only as it was then. So
-//!   it goes in once, when it is over, while Claude Desktop is open and the
-//!   computer isn't being used (the import brings Claude Desktop to the
-//!   front); talking on after that continues in a copy of it.
+//! - The phone's 对话 menu lists Claude Desktop's conversations (see
+//!   `conversations`) and the phone's own. One opened there shows what was
+//!   said so far and goes on in the same conversation, in its own folder
+//!   with its own settings, so Claude Desktop shows it all when it next
+//!   opens it; unless Claude Desktop holds it open right now, then it goes on
+//!   in a copy. A new conversation may go in any folder offered there.
+//! - A phone conversation that has ended (新对话 or another one opened, the
+//!   computer back in use, or 30 minutes quiet) goes into Claude Desktop's
+//!   list through its own import link, `claude://resume?session=<id>`:
+//!   Claude Desktop shows a terminal conversation only once imported. So it
+//!   goes in once, when it is over, while Claude Desktop is open and the
+//!   computer isn't being used or its user just came back (the import brings
+//!   Claude Desktop to the front). Claude Desktop then holds it open, so
+//!   talking on after that continues in a copy of it.
 //!
 //! The relay only sees pc_key. The phone's token is shown once as a QR code
 //! and never kept here.
@@ -51,10 +58,9 @@ const OUTBOX_MAX: usize = 500;
 /// Text from Claude Code sent to the phone, per event.
 const TEXT_MAX: usize = 20_000;
 const DETAIL_MAX: usize = 1_500;
-/// A phone conversation is over after this long without a turn, or when
-/// the phone has been away for PHONE_GONE and the last turn was QUIET ago.
-const CONVERSATION_IDLE: Duration = Duration::from_secs(15 * 60);
-const PHONE_GONE: Duration = Duration::from_secs(60);
+/// A phone conversation is over after this long without a turn, or when the
+/// computer is back in use and the last turn was QUIET ago.
+const CONVERSATION_IDLE: Duration = Duration::from_secs(30 * 60);
 const QUIET: Duration = Duration::from_secs(120);
 /// Claude Desktop jumps to an imported conversation: only after this long
 /// without keyboard or mouse, unless asked to now.
@@ -89,14 +95,14 @@ struct Runtime {
     models: Vec<String>,
     /// The folder the engine (and so the conversation) works in.
     folder: Option<String>,
-    /// The conversation's first prompt, and its last turn.
+    /// The conversation's first prompt (or its title), and its last turn.
     title: Option<String>,
     last_turn: Option<Instant>,
-    /// Since when the phone has been away.
-    phone_gone: Option<Instant>,
-    /// The conversation in `session` is over (queued for Claude Desktop);
-    /// the next prompt continues it in a copy (`--fork-session`).
+    /// The conversation in `session` is over (queued for Claude Desktop).
     ended: bool,
+    /// The conversation was opened from the phone's 对话 menu: its folder
+    /// and its own settings in Claude Desktop.
+    opened: Option<Opened>,
     /// Put conversations into Claude Desktop now, whatever the computer does.
     sync_now: bool,
     /// The pairing as last saved: the phone's status and new engines read
@@ -120,6 +126,12 @@ struct Defaults {
     mode: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+}
+
+#[derive(Clone)]
+struct Opened {
+    folder: String,
+    settings: Defaults,
 }
 
 static RT: LazyLock<Mutex<Runtime>> = LazyLock::new(Default::default);
@@ -286,35 +298,52 @@ fn phone_status(fallback: &Remote) -> Value {
     let rt = RT.lock().unwrap();
     let cfg = rt.cfg.as_ref().unwrap_or(fallback);
     let mut status = settings_view(Some(cfg), &rt);
-    status["folder"] = json!(folder_name(&cfg.folder));
+    let folder = rt
+        .opened
+        .as_ref()
+        .map_or(cfg.folder.as_str(), |o| o.folder.as_str());
+    status["folder"] = json!(folder_name(folder));
     status["models"] = json!(rt.models);
     status["efforts"] = json!(crate::claude_config::EFFORTS);
     status["busy"] = json!(rt.busy);
+    status["session"] = json!(rt.session);
+    status["title"] = json!(rt.title.as_deref().map(|t| clip(t, 60)));
+    // The 对话 menu: older versions of 兔啃 don't answer it.
+    status["conversations"] = json!(true);
     status
 }
 
 /// The mode, model and effort a phone conversation runs with: chosen on the
-/// phone, else Claude Desktop's defaults; bypass permissions when neither
-/// says (the user wants nothing to ask).
+/// phone, else the opened conversation's own in Claude Desktop, else Claude
+/// Desktop's defaults; bypass permissions when none says (the user wants
+/// nothing to ask).
 fn chosen(cfg: Option<&Remote>, rt: &Runtime) -> (String, Option<String>, Option<String>) {
-    let mode = cfg
-        .and_then(|c| c.mode.clone())
-        .filter(|m| MODES.contains(&m.as_str()))
-        .or_else(|| {
-            rt.defaults
-                .mode
-                .clone()
-                .filter(|m| MODES.contains(&m.as_str()))
-        })
-        .unwrap_or_else(|| MODES[0].to_string());
+    let own = rt.opened.as_ref().map(|o| &o.settings);
+    let mode = [
+        cfg.and_then(|c| c.mode.clone()),
+        own.and_then(|o| o.mode.clone()),
+        rt.defaults.mode.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|m| MODES.contains(&m.as_str()))
+    .unwrap_or_else(|| MODES[0].to_string());
     let model = cfg
         .and_then(|c| c.model.clone())
         .filter(|m| rt.models.contains(m))
+        .or_else(|| {
+            own.and_then(|o| o.model.clone())
+                .filter(|m| rt.models.is_empty() || rt.models.contains(m))
+        })
         .or_else(|| rt.defaults.model.clone());
-    let effort = cfg
-        .and_then(|c| c.effort.clone())
-        .filter(|e| crate::claude_config::EFFORTS.contains(&e.as_str()))
-        .or_else(|| rt.defaults.effort.clone());
+    let effort = [
+        cfg.and_then(|c| c.effort.clone()),
+        own.and_then(|o| o.effort.clone()),
+        rt.defaults.effort.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|e| crate::claude_config::EFFORTS.contains(&e.as_str()));
     (mode, model, effort)
 }
 
@@ -379,6 +408,34 @@ fn delta(id: &str, text: &str) {
 
 fn note(app: &AppHandle, text: impl Into<String>) {
     event(app, json!({ "kind": "note", "text": text.into() }));
+}
+
+/// An event for the phone only (a list, a conversation's history).
+fn to_phone(e: Value) {
+    {
+        let mut rt = RT.lock().unwrap();
+        if !rt.listening {
+            return;
+        }
+        rt.outbox.push_back(e);
+        while rt.outbox.len() > OUTBOX_MAX {
+            rt.outbox.pop_front();
+        }
+    }
+    OUTBOX.notify_one();
+}
+
+/// A line for this window's 最近的操作 only.
+fn log_only(app: &AppHandle, text: impl Into<String>) {
+    let e = json!({ "kind": "note", "text": text.into() });
+    {
+        let mut rt = RT.lock().unwrap();
+        rt.log.push_back(e.clone());
+        while rt.log.len() > LOG_MAX {
+            rt.log.pop_front();
+        }
+    }
+    let _ = app.emit("tuken://remote", json!({ "event": e }));
 }
 
 fn changed(app: &AppHandle) {
@@ -546,9 +603,14 @@ pub async fn set(app: &AppHandle, state: &State, input: &Value) -> Result<Value,
     if new_folder {
         // Another project: the conversation so far is over, the next starts afresh.
         end_conversation(app, true).await;
-        let mut rt = RT.lock().unwrap();
-        rt.session = None;
-        rt.ended = false;
+        {
+            let mut rt = RT.lock().unwrap();
+            rt.session = None;
+            rt.ended = false;
+            rt.title = None;
+            rt.opened = None;
+        }
+        fresh_on_phone(&cfg.folder);
     }
     if restart_engine {
         // The next prompt starts Claude Code again, in the new folder.
@@ -652,11 +714,6 @@ async fn listen(app: AppHandle, cfg: Remote, generation: u64) {
                     let online = data["phone_online"] == true;
                     let was = rt.phone_online;
                     rt.phone_online = online;
-                    if online {
-                        rt.phone_gone = None;
-                    } else if rt.phone_gone.is_none() {
-                        rt.phone_gone = Some(Instant::now());
-                    }
                     let had_error = rt.error.take().is_some();
                     drop(rt);
                     if was != online || had_error {
@@ -765,12 +822,14 @@ async fn handle(app: &AppHandle, cfg: &Remote, msg: &Value) {
             }
         }
         Some("new") => {
-            end_conversation(app, true).await;
-            let mut rt = RT.lock().unwrap();
-            rt.session = None;
-            rt.ended = false;
-            drop(rt);
-            note(app, "已开始新对话");
+            let folder = msg["folder"].as_str().filter(|f| !f.is_empty());
+            new_conversation(app, folder).await;
+        }
+        Some("sessions") => send_conversations(app).await,
+        Some("open") => {
+            if let Some(id) = msg["session"].as_str().filter(|s| is_uuid(s)) {
+                open_conversation(app, id).await;
+            }
         }
         Some(kind @ ("model" | "mode" | "effort" | "follow")) => {
             let change = match kind {
@@ -799,6 +858,17 @@ async fn prompt(app: &AppHandle, cfg: &Remote, text: &str) {
         .cfg
         .clone()
         .unwrap_or_else(|| cfg.clone());
+    // Claude Desktop opened the conversation meanwhile: what's said here goes
+    // into a copy, from a fresh engine that reads all of it.
+    let running_on = {
+        let rt = RT.lock().unwrap();
+        rt.engine.as_ref().and(rt.session.clone())
+    };
+    if let Some(session) = running_on {
+        if held_by_desktop(app, &session).await {
+            stop_engine(app, true);
+        }
+    }
     let engine = RT.lock().unwrap().engine.clone();
     let engine = match engine {
         Some(e) => e,
@@ -878,7 +948,14 @@ fn stop_engine(app: &AppHandle, quiet: bool) {
 // ---------------------------------------------------------------- the engine
 
 async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
-    if cfg.folder.is_empty() || !Path::new(&cfg.folder).is_dir() {
+    // An opened conversation works in its own folder.
+    let folder = RT
+        .lock()
+        .unwrap()
+        .opened
+        .as_ref()
+        .map_or_else(|| cfg.folder.clone(), |o| o.folder.clone());
+    if folder.is_empty() || !Path::new(&folder).is_dir() {
         return Err("还没有选文件夹：请在电脑上的兔啃里选择让 Claude 干活的文件夹".into());
     }
     let exe = crate::desktop::code_engine(app)?;
@@ -918,14 +995,13 @@ async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
     if let Some(e) = &effort {
         args.extend(["--effort".into(), e.clone()]);
     }
-    let (resume, fork) = {
-        let rt = RT.lock().unwrap();
-        (rt.session.clone(), rt.ended)
-    };
-    // Continue the conversation, unless its record is gone. One that went
-    // into Claude Desktop continues in a copy: Claude Desktop shows it as
-    // it was when it went in, and may go on with it itself.
+    let resume = RT.lock().unwrap().session.clone();
+    // Continue the conversation, unless its record is gone. One Claude
+    // Desktop may hold open continues in a copy: it would go on from what
+    // it remembers, without what is said here.
+    let mut fork = false;
     if let Some(s) = resume.filter(|s| transcript_exists(&paths, s)) {
+        fork = held_by_desktop(app, &s).await;
         args.extend(["--resume".into(), s]);
         if fork {
             args.push("--fork-session".into());
@@ -935,7 +1011,7 @@ async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
     let mut command = Command::new(&exe);
     command
         .args(&args)
-        .current_dir(&cfg.folder)
+        .current_dir(&folder)
         // The gateway as Claude Code takes it at start (a --settings file
         // isn't read in time for signing in).
         .env("ANTHROPIC_BASE_URL", SITE)
@@ -986,12 +1062,18 @@ async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
         rt.effort = effort.clone();
         rt.restart_after_turn = false;
         rt.spent = 0.0;
-        rt.folder = Some(cfg.folder.clone());
-        if rt.ended {
-            // A new conversation, in Claude Desktop's eyes.
-            rt.ended = false;
+        rt.folder = Some(folder.clone());
+        rt.ended = false;
+        if fork {
+            // A new conversation, in Claude Desktop's eyes: its id comes with init.
             rt.session = None;
         }
+    }
+    if fork {
+        note(
+            app,
+            "电脑上的 Claude Desktop 开着这个对话，接下来的内容会另存为一个新对话，聊完同步到电脑",
+        );
     }
     let init = engine.next_id("init");
     engine
@@ -1012,13 +1094,13 @@ async fn start(app: &AppHandle, cfg: &Remote) -> Result<Arc<Engine>, String> {
     });
     let a = app.clone();
     let e = engine.clone();
-    let folder = cfg.folder.clone();
+    let workdir = folder.clone();
     tauri::async_runtime::spawn(async move {
         let started = Instant::now();
         let mut lines = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             if let Ok(v) = serde_json::from_str::<Value>(&line) {
-                output(&a, &e, &folder, &v).await;
+                output(&a, &e, &workdir, &v).await;
             }
         }
         // The engine is gone. If it went on its own, say why.
@@ -1319,11 +1401,229 @@ async fn apply_settings(app: &AppHandle, before: (String, Option<String>, Option
     changed(app);
 }
 
+// ---------------------------------------------------------------- the phone's 对话 menu
+
+/// Folders offered for a new conversation, at most, and the menu's size
+/// (the relay takes 64 KB an event).
+const FOLDERS_MAX: usize = 12;
+const MENU_BYTES: usize = 60_000;
+
+/// Whether Claude Desktop may hold this conversation open (see `conversations`).
+async fn held_by_desktop(app: &AppHandle, session: &str) -> bool {
+    let Ok(paths) = crate::config_paths(app) else {
+        return true;
+    };
+    let session = session.to_string();
+    tauri::async_runtime::spawn_blocking(move || crate::conversations::held(&paths).holds(&session))
+        .await
+        .unwrap_or(true)
+}
+
+/// What the menu lists: Claude Desktop's conversations and the phone's own
+/// it doesn't have yet (this one, those waiting to go in), with the folders
+/// a new one may work in (the one chosen here first) and which ones Claude
+/// Desktop holds open.
+async fn menu(
+    app: &AppHandle,
+) -> Option<(
+    Vec<crate::conversations::Conversation>,
+    Vec<String>,
+    crate::conversations::Held,
+)> {
+    let paths = crate::config_paths(app).ok()?;
+    let state = app.state::<State>();
+    let (unsynced, chosen_folder) = {
+        let v = state.vault_if_open().await?;
+        (
+            v.remote_unsynced.clone(),
+            v.remote.as_ref().map(|r| r.folder.clone()),
+        )
+    };
+    let mut own: Vec<crate::conversations::Own> = Vec::new();
+    {
+        let rt = RT.lock().unwrap();
+        if let (Some(id), Some(folder)) = (rt.session.clone(), rt.folder.clone()) {
+            own.push(crate::conversations::Own {
+                id,
+                title: rt.title.clone().unwrap_or_default(),
+                folder,
+            });
+        }
+    }
+    own.extend(unsynced.into_iter().map(|u| crate::conversations::Own {
+        id: u.session,
+        title: u.title,
+        folder: u.folder,
+    }));
+    tauri::async_runtime::spawn_blocking(move || {
+        let list = crate::conversations::list(&paths, &own);
+        let mut folders: Vec<String> = Vec::new();
+        for f in chosen_folder
+            .into_iter()
+            .chain(list.iter().map(|c| c.folder.clone()))
+        {
+            if folders.len() < FOLDERS_MAX
+                && !f.is_empty()
+                && !folders.contains(&f)
+                && Path::new(&f).is_dir()
+            {
+                folders.push(f);
+            }
+        }
+        let held = crate::conversations::held(&paths);
+        (list, folders, held)
+    })
+    .await
+    .ok()
+}
+
+/// Sends the phone its 对话 menu.
+async fn send_conversations(app: &AppHandle) {
+    let Some((list, folders, held)) = menu(app).await else {
+        return;
+    };
+    let current = RT.lock().unwrap().session.clone();
+    let mut items: Vec<Value> = list
+        .iter()
+        .map(|c| {
+            json!({
+                "id": c.id,
+                "title": c.title,
+                "folder": folder_name(&c.folder),
+                "path": c.folder,
+                "at": c.at,
+                "open": held.holds(&c.id),
+            })
+        })
+        .collect();
+    let folders: Vec<Value> = folders
+        .iter()
+        .map(|f| json!({ "path": f, "name": folder_name(f) }))
+        .collect();
+    loop {
+        let e =
+            json!({ "kind": "sessions", "items": items, "folders": folders, "current": current });
+        // Within what the relay takes for one event.
+        if e.to_string().len() <= MENU_BYTES || items.is_empty() {
+            to_phone(e);
+            return;
+        }
+        items.truncate(items.len() * 3 / 4);
+    }
+}
+
+/// Opens a conversation from the menu on the phone: the one going on ends,
+/// and the phone gets what was said so far.
+async fn open_conversation(app: &AppHandle, id: &str) {
+    let Some((list, _, _)) = menu(app).await else {
+        return;
+    };
+    let Some(c) = list.into_iter().find(|c| c.id == id) else {
+        note(app, "电脑上找不到这个对话了");
+        return;
+    };
+    let same = RT.lock().unwrap().session.as_deref() == Some(id);
+    if !same {
+        end_conversation(app, true).await;
+        stop_engine(app, true);
+        let mut rt = RT.lock().unwrap();
+        rt.session = Some(c.id.clone());
+        rt.ended = false;
+        rt.title = Some(c.title.clone());
+        rt.last_turn = None;
+        rt.folder = Some(c.folder.clone());
+        rt.opened = Some(Opened {
+            folder: c.folder.clone(),
+            settings: Defaults {
+                mode: c.mode.clone(),
+                model: c.model.clone(),
+                effort: c.effort.clone(),
+            },
+        });
+    }
+    let (file, folder) = (c.transcript.clone(), c.folder.clone());
+    let history =
+        tauri::async_runtime::spawn_blocking(move || crate::conversations::history(&file, &folder))
+            .await
+            .unwrap_or(crate::conversations::History {
+                items: Vec::new(),
+                more: true,
+            });
+    to_phone(json!({
+        "kind": "history",
+        "session": c.id,
+        "title": c.title,
+        "folder": folder_name(&c.folder),
+        "items": history.items,
+        "more": history.more,
+    }));
+    if !same {
+        log_only(app, format!("手机上打开了「{}」", c.title));
+    }
+    changed(app);
+}
+
+/// Starts a new conversation on the phone, in `folder` if it is one the
+/// menu offered.
+async fn new_conversation(app: &AppHandle, folder: Option<&str>) {
+    let folder = match folder {
+        Some(f) => {
+            let offered = menu(app)
+                .await
+                .is_some_and(|(_, folders, _)| folders.iter().any(|o| o == f));
+            if !offered {
+                note(app, "电脑上没有这个文件夹了");
+                return;
+            }
+            Some(f.to_string())
+        }
+        None => None,
+    };
+    end_conversation(app, true).await;
+    stop_engine(app, true);
+    {
+        let mut rt = RT.lock().unwrap();
+        rt.session = None;
+        rt.ended = false;
+        rt.title = None;
+        rt.last_turn = None;
+        rt.opened = None;
+    }
+    let state = app.state::<State>();
+    let current = state
+        .vault()
+        .await
+        .ok()
+        .and_then(|v| v.remote.as_ref().map(|r| r.folder.clone()))
+        .unwrap_or_default();
+    match folder.filter(|f| *f != current) {
+        // Where new conversations go from now on, as choosing it here does
+        // (which starts the phone afresh too).
+        Some(f) => {
+            if let Err(why) = set(app, &state, &json!({ "folder": f })).await {
+                note(app, why);
+            }
+        }
+        None => {
+            fresh_on_phone(&current);
+            note(app, "已开始新对话");
+        }
+    }
+    changed(app);
+}
+
+/// The phone shows a new, empty conversation (before the notes that follow).
+fn fresh_on_phone(folder: &str) {
+    to_phone(
+        json!({ "kind": "history", "session": null, "title": null, "folder": folder_name(folder), "items": [], "more": false }),
+    );
+}
+
 // ---------------------------------------------------------------- Claude Desktop sync
 
-/// Ends the phone conversation: the engine stops, the conversation is queued
-/// for Claude Desktop, and the next prompt continues it in a copy. `quiet`:
-/// no word about it.
+/// Ends the phone conversation: the engine stops, and the conversation is
+/// queued for Claude Desktop unless it is there already (opened from its
+/// list). `quiet`: no word about it.
 async fn end_conversation(app: &AppHandle, quiet: bool) -> bool {
     let (session, folder, title) = {
         let mut rt = RT.lock().unwrap();
@@ -1334,7 +1634,7 @@ async fn end_conversation(app: &AppHandle, quiet: bool) -> bool {
         (
             session,
             rt.folder.clone().unwrap_or_default(),
-            rt.title.take().unwrap_or_default(),
+            rt.title.clone().unwrap_or_default(),
         )
     };
     let engine = RT.lock().unwrap().engine.clone();
@@ -1348,6 +1648,11 @@ async fn end_conversation(app: &AppHandle, quiet: bool) -> bool {
         }
     }
     stop_engine(app, true);
+    let known = crate::config_paths(app).is_ok_and(|p| desktop_has(&p, &session));
+    if known {
+        changed(app);
+        return true;
+    }
     let state = app.state::<State>();
     if let Ok(mut v) = state.vault().await {
         if !v.remote_unsynced.iter().any(|u| u.session == session) {
@@ -1379,8 +1684,9 @@ fn chrono_now_ms() -> i64 {
 }
 
 /// Whether the conversation is over by now: no turn running or waiting for
-/// the phone, and the phone away for a while, or nothing for long.
-fn conversation_over(rt: &Runtime, now: Instant) -> bool {
+/// the phone, and long quiet, or the computer back in use (whoever is at it
+/// is done with the phone) after a quiet moment.
+fn conversation_over(rt: &Runtime, now: Instant, pc_back: bool) -> bool {
     if rt.session.is_none() || rt.ended || rt.busy || !rt.pending.is_empty() {
         return false;
     }
@@ -1388,10 +1694,7 @@ fn conversation_over(rt: &Runtime, now: Instant) -> bool {
         return false;
     };
     let quiet = now.duration_since(last);
-    quiet >= CONVERSATION_IDLE
-        || rt
-            .phone_gone
-            .is_some_and(|g| now.duration_since(g) >= PHONE_GONE && quiet >= QUIET)
+    quiet >= CONVERSATION_IDLE || (pc_back && quiet >= QUIET)
 }
 
 /// Puts ended phone conversations into Claude Desktop, one at a time.
@@ -1402,7 +1705,12 @@ async fn sync_loop(app: AppHandle) {
         if let Ok(paths) = crate::config_paths(&app) {
             refresh_desktop(&paths);
         }
-        if conversation_over(&RT.lock().unwrap(), Instant::now()) {
+        // Claude Desktop jumps to what it imports: not while the computer is
+        // in use, unless its user just came back to it.
+        let idle = pc_idle().await.is_none_or(|d| d >= PC_IDLE);
+        let back = was_idle && !idle;
+        was_idle = idle;
+        if conversation_over(&RT.lock().unwrap(), Instant::now(), back) {
             end_conversation(&app, false).await;
         }
         let state = app.state::<State>();
@@ -1417,10 +1725,6 @@ async fn sync_loop(app: AppHandle) {
         if off && !now_asked {
             continue;
         }
-        // Claude Desktop jumps to what it imports: not while the computer is in use.
-        let idle = pc_idle().await.is_none_or(|d| d >= PC_IDLE);
-        let back = was_idle && !idle;
-        was_idle = idle;
         if !(now_asked || idle || back) || !sync_allowed() || !crate::desktop::running() {
             continue;
         }
@@ -1515,11 +1819,7 @@ fn transcript_exists(paths: &crate::claude_config::Paths, session: &str) -> bool
     if !is_uuid(session) {
         return false;
     }
-    let projects = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .filter(|_| !cfg!(debug_assertions))
-        .map(|d| std::path::PathBuf::from(d).join("projects"))
-        .or_else(|| paths.cli_projects());
-    let Some(projects) = projects else {
+    let Some(projects) = crate::conversations::projects_dir(paths) else {
         return false;
     };
     let name = format!("{session}.jsonl");
@@ -1530,7 +1830,7 @@ fn transcript_exists(paths: &crate::claude_config::Paths, session: &str) -> bool
         .any(|dir| dir.path().join(&name).is_file())
 }
 
-fn is_uuid(s: &str) -> bool {
+pub(crate) fn is_uuid(s: &str) -> bool {
     s.len() == 36
         && s.char_indices().all(|(i, c)| match i {
             8 | 13 | 18 | 23 => c == '-',
@@ -1592,7 +1892,7 @@ pub async fn sync_now(app: &AppHandle, state: &State) -> Result<Value, String> {
 
 // ---------------------------------------------------------------- words for the phone
 
-fn clip(s: &str, max: usize) -> String {
+pub(crate) fn clip(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
     }
@@ -1616,7 +1916,7 @@ fn first_line(s: &str, max: usize) -> String {
 }
 
 /// What a tool call does, in a few words.
-fn tool_title(name: &str, input: &Value, folder: &str) -> String {
+pub(crate) fn tool_title(name: &str, input: &Value, folder: &str) -> String {
     let path = || {
         short_path(
             input["file_path"]
@@ -1880,42 +2180,42 @@ mod tests {
     }
 
     #[test]
-    fn a_conversation_is_over_when_the_phone_is_away_or_it_is_long_quiet() {
+    fn a_conversation_is_over_when_long_quiet_or_the_computer_is_back_in_use() {
         // An hour ahead: going back from now can't, on a machine up for minutes.
         let now = Instant::now() + Duration::from_secs(3600);
         let ago = |s: u64| Some(now - Duration::from_secs(s));
-        let rt = |last: u64, gone: Option<u64>| Runtime {
+        let rt = |last: u64| Runtime {
             session: Some("6f1e1d2c-0000-4000-8000-000000000001".into()),
             last_turn: ago(last),
-            phone_gone: gone.and_then(ago),
             ..Default::default()
         };
-        // The phone is still there: only a long quiet ends it.
-        assert!(!conversation_over(&rt(5 * 60, None), now));
-        assert!(conversation_over(&rt(16 * 60, None), now));
-        // The phone went away a minute ago and the last turn was a while back.
-        assert!(conversation_over(&rt(3 * 60, Some(70)), now));
+        // Only a long quiet ends it while the computer stays unused.
+        assert!(!conversation_over(&rt(20 * 60), now, false));
+        assert!(conversation_over(&rt(31 * 60), now, false));
+        // Someone is back at the computer: done with the phone, unless a
+        // turn just finished.
+        assert!(conversation_over(&rt(3 * 60), now, true));
         assert!(
-            !conversation_over(&rt(30, Some(70)), now),
+            !conversation_over(&rt(30), now, true),
             "a turn just finished"
         );
-        assert!(
-            !conversation_over(&rt(3 * 60, Some(20)), now),
-            "the phone just went"
-        );
         // Not while Claude works or waits for an answer, nor twice.
-        let mut busy = rt(16 * 60, Some(600));
+        let mut busy = rt(31 * 60);
         busy.busy = true;
-        assert!(!conversation_over(&busy, now));
-        let mut asking = rt(16 * 60, Some(600));
+        assert!(!conversation_over(&busy, now, true));
+        let mut asking = rt(31 * 60);
         asking.pending.insert("r1".into(), json!({}));
-        assert!(!conversation_over(&asking, now));
-        let mut ended = rt(16 * 60, Some(600));
+        assert!(!conversation_over(&asking, now, true));
+        let mut ended = rt(31 * 60);
         ended.ended = true;
-        assert!(!conversation_over(&ended, now));
-        let mut none = rt(16 * 60, Some(600));
+        assert!(!conversation_over(&ended, now, true));
+        let mut none = rt(31 * 60);
         none.session = None;
-        assert!(!conversation_over(&none, now));
+        assert!(!conversation_over(&none, now, true));
+        // Opened from the menu and not talked in: nothing to end.
+        let mut opened = rt(0);
+        opened.last_turn = None;
+        assert!(!conversation_over(&opened, now, true));
     }
 
     fn pairing(mode: Option<&str>, model: Option<&str>, effort: Option<&str>) -> Remote {
@@ -1974,6 +2274,58 @@ mod tests {
         );
         let gone = pairing(Some("plan"), Some("claude-gone"), Some("extreme"));
         assert_eq!(chosen(Some(&gone), &rt), chosen(Some(&follow), &rt));
+    }
+
+    #[test]
+    fn an_opened_conversation_keeps_its_own_settings_unless_the_phone_chose() {
+        let rt = Runtime {
+            models: vec!["claude-opus-5-5".into(), "claude-sonnet-5-5".into()],
+            defaults: Defaults {
+                mode: Some("bypassPermissions".into()),
+                model: Some("claude-opus-5-5".into()),
+                effort: Some("max".into()),
+            },
+            opened: Some(Opened {
+                folder: "work".into(),
+                settings: Defaults {
+                    mode: Some("acceptEdits".into()),
+                    model: Some("claude-sonnet-5-5".into()),
+                    effort: Some("high".into()),
+                },
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            chosen(Some(&pairing(None, None, None)), &rt),
+            (
+                "acceptEdits".into(),
+                Some("claude-sonnet-5-5".into()),
+                Some("high".into())
+            )
+        );
+        assert_eq!(
+            chosen(Some(&pairing(Some("default"), None, Some("low"))), &rt),
+            (
+                "default".into(),
+                Some("claude-sonnet-5-5".into()),
+                Some("low".into())
+            )
+        );
+        // Its own ones Claude Desktop no longer offers: Claude Desktop's defaults.
+        let mut odd = rt;
+        odd.opened.as_mut().unwrap().settings = Defaults {
+            mode: Some("plan".into()),
+            model: Some("claude-gone".into()),
+            effort: None,
+        };
+        assert_eq!(
+            chosen(None, &odd),
+            (
+                "bypassPermissions".into(),
+                Some("claude-opus-5-5".into()),
+                Some("max".into())
+            )
+        );
     }
 
     #[test]

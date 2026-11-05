@@ -217,6 +217,198 @@ fn running_pids(_: &std::path::Path) -> Vec<u32> {
     Vec::new()
 }
 
+/// The Claude Code engines Claude Desktop runs now: its own child processes
+/// speaking stream-json. None when they can't be read (empty when it isn't
+/// running). Only reads; see `conversations` for why.
+pub fn engines() -> Option<Vec<crate::conversations::Engine>> {
+    let Some(install) = find_install() else {
+        return Some(Vec::new());
+    };
+    let desktop = running_pids(&install.exe);
+    if desktop.is_empty() {
+        return Some(Vec::new());
+    }
+    child_engines(&desktop)
+}
+
+#[cfg(windows)]
+fn child_engines(desktop: &[u32]) -> Option<Vec<crate::conversations::Engine>> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    let mut children = Vec::new();
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut ok = Process32FirstW(snapshot, &mut entry);
+        while ok != 0 {
+            // Its helpers run its own program; the engines are claude.exe too.
+            if desktop.contains(&entry.th32ParentProcessID)
+                && !desktop.contains(&entry.th32ProcessID)
+            {
+                let len = entry
+                    .szExeFile
+                    .iter()
+                    .position(|c| *c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                let name = String::from_utf16_lossy(&entry.szExeFile[..len]).to_lowercase();
+                if name == "claude.exe" {
+                    children.push(entry.th32ProcessID);
+                }
+            }
+            ok = Process32NextW(snapshot, &mut entry);
+        }
+        CloseHandle(snapshot);
+    }
+    let mut engines = Vec::new();
+    for pid in children {
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                return None;
+            }
+            let line = command_line(process);
+            let mut created: FILETIME = std::mem::zeroed();
+            let mut unused: [FILETIME; 3] = std::mem::zeroed();
+            let timed = GetProcessTimes(
+                process,
+                &mut created,
+                &mut unused[0],
+                &mut unused[1],
+                &mut unused[2],
+            ) != 0;
+            CloseHandle(process);
+            let line = line?;
+            if !line.contains("stream-json") {
+                continue;
+            }
+            // 100 ns ticks since 1601 → ms since 1970.
+            let ticks =
+                (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+            let started = if timed {
+                (ticks / 10_000) as i64 - 11_644_473_600_000
+            } else {
+                0
+            };
+            engines.push(crate::conversations::Engine {
+                started,
+                resumed: crate::conversations::resumed_in(&line),
+            });
+        }
+    }
+    Some(engines)
+}
+
+/// Another process's command line (ProcessCommandLineInformation, Windows 8.1+).
+#[cfg(windows)]
+unsafe fn command_line(process: windows_sys::Win32::Foundation::HANDLE) -> Option<String> {
+    use windows_sys::Wdk::System::Threading::{
+        NtQueryInformationProcess, ProcessCommandLineInformation,
+    };
+    use windows_sys::Win32::Foundation::UNICODE_STRING;
+    let mut len = 0u32;
+    NtQueryInformationProcess(
+        process,
+        ProcessCommandLineInformation,
+        std::ptr::null_mut(),
+        0,
+        &mut len,
+    );
+    if (len as usize) < std::mem::size_of::<UNICODE_STRING>() || len > 1 << 20 {
+        return None;
+    }
+    // u64s, so the UNICODE_STRING at its start is aligned.
+    let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+    if NtQueryInformationProcess(
+        process,
+        ProcessCommandLineInformation,
+        buf.as_mut_ptr().cast(),
+        len,
+        &mut len,
+    ) < 0
+    {
+        return None;
+    }
+    let text = &*(buf.as_ptr() as *const UNICODE_STRING);
+    // The characters follow it, inside the same buffer.
+    let start = buf.as_ptr() as usize;
+    let at = text.Buffer as usize;
+    let bytes = usize::from(text.Length);
+    if text.Buffer.is_null() || at < start || at + bytes > start + buf.len() * 8 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(std::slice::from_raw_parts(
+        text.Buffer,
+        bytes / 2,
+    )))
+}
+
+#[cfg(target_os = "macos")]
+fn child_engines(desktop: &[u32]) -> Option<Vec<crate::conversations::Engine>> {
+    let out = std::process::Command::new("/bin/ps")
+        .args(["-axww", "-o", "pid=,ppid=,etime=,command="])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64);
+    Some(engines_in_ps(
+        &String::from_utf8_lossy(&out.stdout),
+        desktop,
+        now,
+    ))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn child_engines(_: &[u32]) -> Option<Vec<crate::conversations::Engine>> {
+    Some(Vec::new())
+}
+
+/// The engines in `ps -o pid=,ppid=,etime=,command=` output: children of
+/// Claude Desktop speaking stream-json; etime is `[[dd-]hh:]mm:ss`.
+#[cfg(any(target_os = "macos", test))]
+fn engines_in_ps(text: &str, desktop: &[u32], now: i64) -> Vec<crate::conversations::Engine> {
+    let elapsed = |s: &str| -> Option<i64> {
+        let (days, rest) = match s.split_once('-') {
+            Some((d, r)) => (d.parse::<i64>().ok()?, r),
+            None => (0, s),
+        };
+        let mut secs = 0i64;
+        for part in rest.split(':') {
+            secs = secs * 60 + part.parse::<i64>().ok()?;
+        }
+        Some((days * 86_400 + secs) * 1000)
+    };
+    text.lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let pid: u32 = words.next()?.parse().ok()?;
+            let ppid: u32 = words.next()?.parse().ok()?;
+            let age = elapsed(words.next()?)?;
+            let command = words.collect::<Vec<_>>().join(" ");
+            (desktop.contains(&ppid) && !desktop.contains(&pid) && command.contains("stream-json"))
+                .then(|| crate::conversations::Engine {
+                    started: now - age,
+                    resumed: crate::conversations::resumed_in(&command),
+                })
+        })
+        .collect()
+}
+
 #[cfg(windows)]
 fn terminate(pids: &[u32]) {
     use windows_sys::Win32::Foundation::CloseHandle;
@@ -306,13 +498,13 @@ fn launch(install: &Install) -> Result<(), String> {
         .map_err(|_| "无法启动 Claude Desktop".to_string())
 }
 
-/// The Code engine of the installed Claude Desktop, for 手机遥控. A dev build
-/// may point `TUKEN_CLAUDE_CODE` at one, as its own data folder has none.
 /// Whether Claude Desktop is open: its own program, not Claude Code.
 pub fn running() -> bool {
     find_install().is_some_and(|i| !running_pids(&i.exe).is_empty())
 }
 
+/// The Code engine of the installed Claude Desktop, for 手机遥控. A dev build
+/// may point `TUKEN_CLAUDE_CODE` at one, as its own data folder has none.
 pub fn code_engine(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if cfg!(debug_assertions) {
         if let Some(p) = std::env::var_os("TUKEN_CLAUDE_CODE").map(PathBuf::from) {
@@ -552,6 +744,34 @@ mod tests {
             install.version,
             install.exe,
             running_pids(&install.exe)
+        );
+        // Reads only: when each engine started and what it resumed.
+        println!("engines={:?}", engines());
+    }
+
+    #[test]
+    fn engines_are_claude_desktops_children_speaking_stream_json() {
+        let ps = "\
+  100     1    1-02:03:04 /Applications/Claude.app/Contents/MacOS/Claude
+  101   100       10:00 /Applications/Claude.app/Contents/Frameworks/Claude Helper --type=gpu
+  102   100    02:00:05 /x/claude-code/2.1/claude.app/Contents/MacOS/claude --output-format stream-json --resume=11111111-1111-4111-8111-111111111111
+  103   100       00:30 /x/claude-code/2.1/claude.app/Contents/MacOS/claude --output-format stream-json
+  104   555       00:30 claude --output-format stream-json --resume=22222222-2222-4222-8222-222222222222
+";
+        let now = 10_000_000_000;
+        let found = engines_in_ps(ps, &[100, 101], now);
+        assert_eq!(
+            found,
+            vec![
+                crate::conversations::Engine {
+                    started: now - (2 * 3600 + 5) * 1000,
+                    resumed: Some("11111111-1111-4111-8111-111111111111".into()),
+                },
+                crate::conversations::Engine {
+                    started: now - 30_000,
+                    resumed: None,
+                },
+            ]
         );
     }
 

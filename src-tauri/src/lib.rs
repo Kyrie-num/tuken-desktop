@@ -6,6 +6,7 @@ mod api;
 mod autostart;
 mod cashier;
 mod claude_config;
+mod conversations;
 mod desktop;
 #[cfg(windows)]
 mod desktop_code;

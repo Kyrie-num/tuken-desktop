@@ -363,7 +363,7 @@ export function RemoteSheet() {
             <Checkbox
               checked={r.sync !== false}
               label="同步到 Claude Desktop"
-              hint="手机上的对话结束后，趁你没用电脑时放进 Claude Desktop 的对话列表（它会跳到这段对话）"
+              hint="手机上聊完的对话放进 Claude Desktop 的对话列表，等你没在用电脑或刚回来时再放（它会跳到这段对话）"
               disabled={busy}
               onChange={(on) => void act("remote_set", { sync: on })}
             />
